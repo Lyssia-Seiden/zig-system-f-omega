@@ -127,5 +127,9 @@ pub fn reduce(term: Term) Term {
 test "reduce id" {
     const term = Term{ .application = .{ .lhs = &Term{ .abstract = .{ .name = 1, .ty = FTy{ .ty_variable = 2 }, .term = &Term{ .variable = 1 } } }, .rhs = &Term{ .variable = 42 } } };
     std.debug.print("{}\n", .{term});
-    std.debug.print("{}\n", .{reduce(term)});
+    const reduced = reduce(term);
+    std.debug.print("{}\n", .{reduced});
+    const expected = Term{.variable = 42};
+    try std.testing.expectEqual(@intFromEnum(expected), @intFromEnum(reduced));
+    try std.testing.expectEqual(expected.variable, reduced.variable);
 }
