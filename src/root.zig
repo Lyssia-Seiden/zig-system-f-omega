@@ -1,6 +1,10 @@
 //! By convention, root.zig is the root source file when making a library.
 const std = @import("std");
 
+pub const std_options: std.Options = .{
+    .fmt_max_depth = 127,
+};
+
 pub const Label: type = u64;
 pub const FTy: type = union(enum) {
     ty_variable: Label,
@@ -88,6 +92,7 @@ pub fn tyReplace(term: Term, target: Label, val: FTy) Term {
 }
 
 pub fn reduce(term: Term) Term {
+    std.debug.print("{}\n", .{term});
     switch (term) {
         .variable => return term,
         .abstract => return term,
@@ -95,21 +100,15 @@ pub fn reduce(term: Term) Term {
             const lhs = t.lhs.*;
             const rhs = t.rhs.*;
 
-            if (std.meta.eql(reduce(lhs), lhs)) {
-                if (std.meta.eql(reduce(rhs), rhs)) {
-                    switch (lhs) {
-                        .abstract => |left_term| {
-                            const name = left_term.name;
-                            const inner = left_term.term.*;
-                            return replace(inner, name, rhs);
-                        },
-                        else => return term,
-                    }
-                } else {
-                    return reduce(rhs);
-                }
-            } else {
-                return reduce(lhs);
+            const reduced_lhs = reduce(lhs);
+            const reduced_rhs = reduce(rhs);
+            switch (reduced_lhs) {
+                .abstract => |left_term| {
+                    const name = left_term.name;
+                    const inner = left_term.term.*;
+                    return replace(inner, name, reduced_rhs);
+                },
+                else => return term,
             }
         },
         .type_abstraction => return term,
@@ -129,7 +128,19 @@ test "reduce id" {
     std.debug.print("{}\n", .{term});
     const reduced = reduce(term);
     std.debug.print("{}\n", .{reduced});
-    const expected = Term{.variable = 42};
+    const expected = Term{ .variable = 42 };
     try std.testing.expectEqual(@intFromEnum(expected), @intFromEnum(reduced));
     try std.testing.expectEqual(expected.variable, reduced.variable);
+}
+
+test "double reduce id" {
+    const id = Term{ .abstract = .{ .name = 1, .ty = FTy{ .ty_variable = 2 }, .term = &Term{ .variable = 1 } } };
+    const doubleId = Term{ .application = .{ .lhs = &id, .rhs = &id } };
+    std.debug.print("double id {}\n", .{doubleId});
+    const reducedIds = reduce(doubleId);
+    std.debug.print("reduced ids {}\n", .{reducedIds});
+    const appliedDoubleId = Term{ .application = .{ .lhs = &doubleId, .rhs = &Term{ .variable = 67 } } };
+    std.debug.print("appd double id {}\n", .{appliedDoubleId});
+    const reducedApplication = reduce(appliedDoubleId);
+    std.debug.print("reduced application {}\n", .{reducedApplication});
 }
