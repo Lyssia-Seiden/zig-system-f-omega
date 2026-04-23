@@ -25,6 +25,14 @@ pub const FTy: type = union(enum) {
             else => return self,
         }
     }
+
+    pub fn format(self: FTy, writer: *std.io.Writer) !void {
+        switch (self) {
+            .ty_variable => try writer.print("{}", .{self.ty_variable}),
+            .function => try writer.print("{f} -> {f}", .{self.function.from, self.function.to}),
+            .universal => try writer.print("∀{}.{f}", .{self.universal.label, self.universal.ty}),
+        }
+    }
 };
 pub const Term = union(enum) {
     variable: Label,
@@ -45,6 +53,19 @@ pub const Term = union(enum) {
         term: *const Term,
         ty: FTy,
     },
+
+    pub fn format(
+        self: Term,
+        writer: *std.io.Writer,
+    ) !void {
+        switch (self) {
+            .variable => try writer.print("{}", .{self.variable}),
+            .abstract => |t| try writer.print("λ{}:{f}.({f})", .{ t.name, t.ty, t.term }),
+            .application => |t| try writer.print("({f} {f})", .{t.lhs, t.rhs}),
+            .type_abstraction => |t| try writer.print("λ{}.({f})", .{t.label, t.term}),
+            .type_application => |t| try writer.print("{f} [{f}]", .{t.term, t.ty}),
+        }
+    }
 };
 
 pub const Context = []const (union(enum) {
@@ -92,7 +113,7 @@ pub fn tyReplace(term: Term, target: Label, val: FTy) Term {
 }
 
 pub fn reduce(term: Term) Term {
-    std.debug.print("{}\n", .{term});
+    std.debug.print("{f}\n", .{term});
     switch (term) {
         .variable => return term,
         .abstract => return term,
@@ -125,9 +146,9 @@ pub fn reduce(term: Term) Term {
 
 test "reduce id" {
     const term = Term{ .application = .{ .lhs = &Term{ .abstract = .{ .name = 1, .ty = FTy{ .ty_variable = 2 }, .term = &Term{ .variable = 1 } } }, .rhs = &Term{ .variable = 42 } } };
-    std.debug.print("{}\n", .{term});
+    std.debug.print("{f}\n", .{term});
     const reduced = reduce(term);
-    std.debug.print("{}\n", .{reduced});
+    std.debug.print("{f}\n", .{reduced});
     const expected = Term{ .variable = 42 };
     try std.testing.expectEqual(@intFromEnum(expected), @intFromEnum(reduced));
     try std.testing.expectEqual(expected.variable, reduced.variable);
@@ -135,12 +156,13 @@ test "reduce id" {
 
 test "double reduce id" {
     const id = Term{ .abstract = .{ .name = 1, .ty = FTy{ .ty_variable = 2 }, .term = &Term{ .variable = 1 } } };
-    const doubleId = Term{ .application = .{ .lhs = &id, .rhs = &id } };
-    std.debug.print("double id {}\n", .{doubleId});
+    const id2 = Term{ .abstract = .{ .name = 3, .ty = FTy{ .ty_variable = 2 }, .term = &Term{ .variable = 3 } } };
+    const doubleId = Term{ .application = .{ .lhs = &id, .rhs = &id2 } };
+    std.debug.print("double id {f}\n", .{doubleId});
     const reducedIds = reduce(doubleId);
-    std.debug.print("reduced ids {}\n", .{reducedIds});
+    std.debug.print("reduced ids {f}\n", .{reducedIds});
     const appliedDoubleId = Term{ .application = .{ .lhs = &doubleId, .rhs = &Term{ .variable = 67 } } };
-    std.debug.print("appd double id {}\n", .{appliedDoubleId});
+    std.debug.print("appd double id {f}\n", .{appliedDoubleId});
     const reducedApplication = reduce(appliedDoubleId);
-    std.debug.print("reduced application {}\n", .{reducedApplication});
+    std.debug.print("reduced application {f}\n", .{reducedApplication});
 }
