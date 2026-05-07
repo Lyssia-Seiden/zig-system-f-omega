@@ -265,3 +265,29 @@ test "tychk id" {
         res,
     );
 }
+
+test "tychk id app" {
+    const term = Term{ .application = .{
+        .lhs = &Term{ .abstract = .{
+            .name = 1,
+            .ty = FTy{ .ty_variable = 2 },
+            .term = &Term{ .variable = 1 },
+        } },
+        .rhs = &Term{
+            .variable = 42,
+        },
+    } };
+    std.debug.print("{f}\n", .{term});
+    var dba: std.heap.DebugAllocator(.{}) = .init;
+    const allocator = dba.allocator();
+    var gamma = Context.init(allocator);
+    const res = try tyReduce(allocator, &term, &gamma);
+    std.debug.print("{f}\n", .{res});
+    try std.testing.expectEqualDeep(
+        FTy{ .function = .{
+            .from = &FTy{ .ty_variable = 2 },
+            .to = &FTy{ .ty_variable = 2 },
+        } },
+        res,
+    );
+}
