@@ -70,10 +70,6 @@ pub const Term = union(enum) {
     }
 };
 
-// pub const Context = []const (union(enum) {
-//     term: struct { label: Label, ty: FTy },
-//     ty: struct { label: Label },
-// });
 pub const Context = std.AutoHashMap(Label, union(enum) { term: FTy, ty: struct {} });
 
 pub fn replace(term: Term, target: Label, val: Term) Term {
@@ -227,7 +223,12 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
         },
         .type_abstraction => |t| {
             try ctx.put(t.label, .{ .ty = .{} });
-            return tyReduce(allocator, t.term, ctx);
+            const alloc = try allocator.create(FTy);
+            alloc.* = try tyReduce(allocator, t.term, ctx);
+            return FTy{ .universal = .{
+                .label = t.label,
+                .ty = alloc,
+            } };
         },
         .type_application => |t| {
             return switch (t.term.*) {
@@ -258,9 +259,12 @@ test "tychk id" {
     const res = try tyReduce(allocator, &term, &gamma);
     std.debug.print("{f}\n", .{res});
     try std.testing.expectEqualDeep(
-        FTy{ .function = .{
-            .from = &FTy{ .ty_variable = 2 },
-            .to = &FTy{ .ty_variable = 2 },
+        FTy{ .universal = .{
+            .label = 2,
+            .ty = &FTy{ .function = .{
+                .from = &FTy{ .ty_variable = 2 },
+                .to = &FTy{ .ty_variable = 2 },
+            } },
         } },
         res,
     );
@@ -281,13 +285,29 @@ test "tychk id app" {
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
     var gamma = Context.init(allocator);
+    try gamma.put(42, .{ .term = FTy{ .ty_variable = 2 } });
     const res = try tyReduce(allocator, &term, &gamma);
     std.debug.print("{f}\n", .{res});
     try std.testing.expectEqualDeep(
-        FTy{ .function = .{
-            .from = &FTy{ .ty_variable = 2 },
-            .to = &FTy{ .ty_variable = 2 },
-        } },
+        FTy{ .ty_variable = 2 },
         res,
+    );
+}
+
+test "tychk forall" {
+    const simple_term = Term{ .type_abstraction = .{
+        .label = 1,
+        .term = &Term{ .variable = 2 },
+    } };
+    std.debug.print("{f}\n", .{simple_term});
+
+    var dba: std.heap.DebugAllocator(.{}) = .init;
+    const allocator = dba.allocator();
+    var gamma = Context.init(allocator);
+    try gamma.put(2, .{ .term = FTy{ .ty_variable = 3 } });
+
+    try std.testing.expectEqualDeep(
+        FTy{ .universal = .{ .label = 1, .ty = &FTy{ .ty_variable = 3 } } },
+        tyReduce(allocator, &simple_term, &gamma),
     );
 }
