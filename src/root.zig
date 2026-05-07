@@ -311,3 +311,98 @@ test "tychk forall" {
         tyReduce(allocator, &simple_term, &gamma),
     );
 }
+
+pub fn parse(allocator: Allocator, str: []const u8) !*const Term {
+    const lambda = "λ";
+    const big_lambda = "Λ";
+    if (str.len > 1 and std.mem.eql(u8, lambda, str[0..2])) { // λ
+        //TODO zext
+        const label: [*:':']const u8 = @ptrCast(str.ptr + lambda.len);
+        // const label_id: u64 = @bitCast(label[0..@min(8, std.mem.len(label))] std.mem.);
+        const label_id: u64 = std.mem.bytesToValue(u64, label);
+        // TODO properly parse type
+        var ty_label: [*:'.']const u8 = @ptrCast(str.ptr);
+        while (ty_label[0] != ':') ty_label += 1;
+        ty_label += 1;
+        const ty_label_id: u64 = std.mem.bytesToValue(u64, ty_label);
+
+        var rest: []const u8 = str;
+        while (rest[0] != '.') {
+            rest.ptr += 1;
+            rest.len -= 1;
+        }
+        rest.ptr += 1;
+        rest.len -= 1;
+
+        const alloc = try allocator.create(Term);
+        alloc.* = Term{ .abstract = .{
+            .name = label_id,
+            .ty = FTy{ .ty_variable = ty_label_id },
+            .term = try parse(allocator, rest),
+        } };
+        return alloc;
+    }
+    if (str.len > 1 and std.mem.eql(u8, big_lambda, str[0..2])) { // Λ
+        //TODO zext
+        const label: [*:'.']const u8 = @ptrCast(str.ptr + lambda.len);
+        const label_id: u64 = std.mem.bytesToValue(u64, label);
+
+        var rest: []const u8 = str;
+        while (rest[0] != '.') {
+            rest.ptr += 1;
+            rest.len -= 1;
+        }
+        rest.ptr += 1;
+        rest.len -= 1;
+
+        const alloc = try allocator.create(Term);
+        alloc.* = Term{ .type_abstraction = .{
+            .label = label_id,
+            .term = try parse(allocator, rest),
+        } };
+        return alloc;
+    }
+    if (std.mem.containsAtLeastScalar(u8, str, 1, ' ')) {
+        // application or type application
+        // TODO type app
+        const lhs: [*:' ']const u8 = @ptrCast(str.ptr);
+        var rhs: []const u8 = str;
+        while (rhs[0] != ' ') {
+            rhs.ptr += 1;
+            rhs.len -= 1;
+        }
+        rhs.ptr += 1;
+        rhs.len -= 1;
+
+        std.debug.print("lhs {any} rhs {any}\n", .{ lhs[0..8], rhs });
+        const alloc = try allocator.create(Term);
+        const lhs_term = try parse(allocator, std.mem.span(lhs));
+        const rhs_term = try parse(allocator, rhs);
+        alloc.* = Term{ .application = .{
+            .lhs = lhs_term,
+            .rhs = rhs_term,
+        } };
+        return alloc;
+    }
+
+    // else: variable
+    const alloc = try allocator.create(Term);
+    alloc.* = Term{ .variable = 0 };
+    return alloc;
+}
+
+test "parsing" {
+    var dba: std.heap.DebugAllocator(.{}) = .init;
+    const allocator = dba.allocator();
+
+    const parsed = try parse(allocator, "λaaaaaaa:aaaaaaa.c");
+    std.debug.print("{f}\n", .{parsed});
+}
+
+test "parsing2" {
+    var dba: std.heap.DebugAllocator(.{}) = .init;
+    const allocator = dba.allocator();
+
+    const parsed = try parse(allocator, "aaaaaaaa bbbbbbbb");
+    std.debug.print("{f}\n", .{parsed});
+}
