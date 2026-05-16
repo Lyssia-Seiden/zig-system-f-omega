@@ -29,9 +29,9 @@ pub const FTy: type = union(enum) {
 
     pub fn format(self: FTy, writer: *std.Io.Writer) !void {
         switch (self) {
-            .ty_variable => try writer.print("{any}", .{self.ty_variable}),
+            .ty_variable => try writer.print("{s}", .{self.ty_variable}),
             .function => try writer.print("{f} -> {f}", .{ self.function.from, self.function.to }),
-            .universal => try writer.print("∀{any}.{f}", .{ self.universal.label, self.universal.ty }),
+            .universal => try writer.print("∀{s}.{f}", .{ self.universal.label, self.universal.ty }),
         }
     }
 };
@@ -60,11 +60,11 @@ pub const Term = union(enum) {
         writer: *std.Io.Writer,
     ) !void {
         switch (self) {
-            .variable => try writer.print("{any}", .{self.variable}),
-            .abstract => |t| try writer.print("λ{any}:{f}.({f})", .{ t.name, t.ty, t.term }),
+            .variable => try writer.print("{s}", .{self.variable}),
+            .abstract => |t| try writer.print("λ{s}:{f}.({f})", .{ t.name, t.ty, t.term }),
             .application => |t| try writer.print("({f} {f})", .{ t.lhs, t.rhs }),
             // .type_abstraction => |t| try writer.print("λ{}.({f})", .{ t.label, t.term }),
-            .type_abstraction => |t| try writer.print("Λ{any}.({f})", .{ t.label, t.term }),
+            .type_abstraction => |t| try writer.print("Λ{s}.({f})", .{ t.label, t.term }),
             .type_application => |t| try writer.print("{f} [{f}]", .{ t.term, t.ty }),
         }
     }
@@ -122,7 +122,7 @@ pub fn tyReplace(allocator: Allocator, term: Term, target: Label, val: FTy) !Ter
 }
 
 pub fn reduce(allocator: Allocator, term: Term) !Term {
-    std.debug.print("{f}\n", .{term});
+    errdefer std.debug.print("\n{f}\n", .{term});
     switch (term) {
         .variable => return term,
         .abstract => return term,
@@ -165,9 +165,9 @@ test "reduce id" {
             .rhs = &Term{ .variable = &.{42} },
         },
     };
-    std.debug.print("{f}\n", .{term});
+    errdefer std.debug.print("\n{f}\n", .{term});
     const reduced = try reduce(allocator.allocator(), term);
-    std.debug.print("{f}\n", .{reduced});
+    errdefer std.debug.print("\n{f}\n", .{reduced});
     const expected = Term{ .variable = &.{42} };
     try std.testing.expectEqual(@intFromEnum(expected), @intFromEnum(reduced));
     try std.testing.expectEqual(expected.variable, reduced.variable);
@@ -186,13 +186,13 @@ test "double reduce id" {
         .term = &Term{ .variable = &.{3} },
     } };
     const doubleId = Term{ .application = .{ .lhs = &id, .rhs = &id2 } };
-    std.debug.print("double id {f}\n", .{doubleId});
+    errdefer std.debug.print("\ndouble id {f}\n", .{doubleId});
     const reducedIds = try reduce(allocator.allocator(), doubleId);
-    std.debug.print("reduced ids {f}\n", .{reducedIds});
+    errdefer std.debug.print("\nreduced ids {f}\n", .{reducedIds});
     const appliedDoubleId = Term{ .application = .{ .lhs = &doubleId, .rhs = &Term{ .variable = &.{67} } } };
-    std.debug.print("appd double id {f}\n", .{appliedDoubleId});
+    errdefer std.debug.print("\nappd double id {f}\n", .{appliedDoubleId});
     const reducedApplication = try reduce(allocator.allocator(), appliedDoubleId);
-    std.debug.print("reduced application {f}\n", .{reducedApplication});
+    errdefer std.debug.print("\nreduced application {f}\n", .{reducedApplication});
     try std.testing.expectEqual(Term{ .variable = &.{67} }, reducedApplication);
 }
 
@@ -206,7 +206,7 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
                 .ty => FTy{ .ty_variable = term.variable },
             };
         } else {
-            std.debug.print("{f}\n", .{term});
+            errdefer std.debug.print("\n{f}\n", .{term});
             return error.UnderspecifiedType;
         },
         .abstract => |t| { // use T-Abs
@@ -261,12 +261,12 @@ test "tychk id" {
             .term = &Term{ .variable = &.{1} },
         } },
     } };
-    std.debug.print("{f}\n", .{term});
+    errdefer std.debug.print("\n{f}\n", .{term});
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
     var gamma = Context.init(allocator);
     const res = try tyReduce(allocator, &term, &gamma);
-    std.debug.print("{f}\n", .{res});
+    errdefer std.debug.print("\n{f}\n", .{res});
     try std.testing.expectEqualDeep(
         FTy{ .universal = .{
             .label = &.{2},
@@ -290,13 +290,13 @@ test "tychk id app" {
             .variable = &.{42},
         },
     } };
-    std.debug.print("{f}\n", .{term});
+    errdefer std.debug.print("\n{f}\n", .{term});
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
     var gamma = Context.init(allocator);
     try gamma.put(&.{42}, .{ .term = FTy{ .ty_variable = &.{2} } });
     const res = try tyReduce(allocator, &term, &gamma);
-    std.debug.print("{f}\n", .{res});
+    errdefer std.debug.print("\n{f}\n", .{res});
     try std.testing.expectEqualDeep(
         FTy{ .ty_variable = &.{2} },
         res,
@@ -308,7 +308,7 @@ test "tychk forall" {
         .label = &.{1},
         .term = &Term{ .variable = &.{2} },
     } };
-    std.debug.print("{f}\n", .{simple_term});
+    errdefer std.debug.print("\n{f}\n", .{simple_term});
 
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
@@ -348,16 +348,21 @@ test "tychk forall" {
 //     try std.testing.expectEqual(0x6161616161616161, strToLabel("aaaaaaaaa"));
 // }
 
-fn parseLabel(allocator: Allocator, str: *std.unicode.Utf8Iterator, term: []const u8) ![]const u8 {
+fn parseLabel(allocator: Allocator, str: *std.unicode.Utf8Iterator, term: std.unicode.Utf8View) ![]const u8 {
     // init to one word of cap
     var label: std.ArrayList(u8) = try .initCapacity(allocator, 8);
-    defer label.deinit(allocator);
     while (str.nextCodepointSlice()) |sl| {
-        if (std.mem.startsWith(u8, str.bytes[str.i - 1 ..], term)) break;
+        if (term.bytes.len > 0 and
+            std.mem.startsWith(u8, str.bytes[str.i - 1 ..], term.bytes))
+        {
+            var term_iter = term.iterator();
+            _ = term_iter.nextCodepoint();
+            while (term_iter.nextCodepoint()) |_| {
+                _ = str.nextCodepoint();
+            }
+            break;
+        }
         try label.appendSlice(allocator, sl);
-    }
-    for (0..term.len - 1) |_| { // we assume the terminator is byte valid
-        _ = str.nextCodepoint();
     }
     return try label.toOwnedSlice(allocator);
 }
@@ -379,9 +384,9 @@ test "parse label" {
             const res = try parseLabel(
                 allocator,
                 &iter,
-                term,
+                std.unicode.Utf8View.initUnchecked(term),
             );
-            std.debug.print(
+            errdefer std.debug.print(
                 "expected {s} actual {s} from {s} tail is {s}\n",
                 .{ lbl, res, cons, iter.bytes[iter.i..] },
             );
@@ -409,6 +414,8 @@ test "parse label" {
     try WhyIsZigLikeThis.chk(alloc, "b-", "->", "b");
     try WhyIsZigLikeThis.chk(alloc, "a>", "->", "b");
     try WhyIsZigLikeThis.chk(alloc, "b>", "->", "b");
+
+    try WhyIsZigLikeThis.chk(alloc, "a", "", "");
 }
 
 // parse type
@@ -418,12 +425,12 @@ fn parseTy(
     str: *std.unicode.Utf8Iterator,
     term: []const u8,
 ) !*const FTy {
-    std.debug.print("parsing {s} until {s}\n", .{ str.bytes[str.i..], term });
+    errdefer std.debug.print("\nparsing {s} until {s}\n", .{ str.bytes[str.i..], term });
     const forall = "∀";
     if (std.mem.startsWith(u8, str.bytes[str.i..], forall)) {
         // discard ∀
         _ = str.nextCodepoint();
-        const label = try parseLabel(allocator, str, ".");
+        const label = try parseLabel(allocator, str, std.unicode.Utf8View.initUnchecked("."));
         const rhs = try parseTy(allocator, str, term);
         const alloc = try allocator.create(FTy);
         alloc.* = FTy{ .universal = .{
@@ -455,7 +462,7 @@ fn parseTy(
 
     // else its a type variable
     const alloc = try allocator.create(FTy);
-    alloc.* = FTy{ .ty_variable = try parseLabel(allocator, str, term) };
+    alloc.* = FTy{ .ty_variable = try parseLabel(allocator, str, std.unicode.Utf8View.initUnchecked(term)) };
     return alloc;
 }
 
@@ -484,7 +491,7 @@ test "test type parsing func" {
         &str,
         ".",
     );
-    std.debug.print("{f}\n", .{res});
+    errdefer std.debug.print("\n{f}\n", .{res});
     try std.testing.expectEqualDeep(
         &FTy{ .function = .{
             .from = &FTy{ .ty_variable = "a" },
@@ -533,42 +540,25 @@ test "test type parsing complex" {
     );
 }
 
-const ParseState = union(enum) {
-    Start,
-    Abs,
-    TyAbs,
-};
-
-pub fn parse(gpa: Allocator, state: ParseState, str: *std.unicode.Utf8Iterator) !*const Term {
+pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
     const lambda = 'λ';
     const big_lambda = 'Λ';
 
-    switch (state) {
-        .Start => {
-            const char = str.nextCodepoint() orelse return error.OutOfChars;
+    const char_sl = str.peek(1);
+    if (char_sl.len == 0) return error.OutOfChars;
+    const char: u21 = try std.unicode.utf8Decode(char_sl);
 
-            return switch (char) {
-                lambda => return parse(gpa, .Abs, str),
-                big_lambda => return parse(gpa, .TyAbs, str),
-                else => {
-                    str.i -= 1;
-                    // const maybe_last_space = std.mem.lastIndexOfScalar(u8, str.bytes, ' ');
-                    // if (maybe_last_space) |last_space| {
-                    //     // this is an application of some sort
-
-                    // }
-                    // this is just a term
-                    const label = try parseLabel(gpa, str, &.{});
-                    const alloc = try gpa.create(Term);
-                    alloc.* = Term{ .variable = label };
-                    return alloc;
-                },
-            };
-        },
-        .Abs => {
-            const label = try parseLabel(gpa, str, &.{':'});
+    return switch (char) {
+        lambda => {
+            _ = str.nextCodepoint();
+            const label = try parseLabel(
+                gpa,
+                str,
+                std.unicode.Utf8View.initUnchecked(":"),
+            );
             const ty = try parseTy(gpa, str, ".");
-            const term = try parse(gpa, .Start, str);
+            // std.debug.print("{s}\n", .{str.bytes[str.i..]});
+            const term = try parse(gpa, str);
             const alloc = try gpa.create(Term);
             alloc.* = Term{ .abstract = .{
                 .name = label,
@@ -577,26 +567,45 @@ pub fn parse(gpa: Allocator, state: ParseState, str: *std.unicode.Utf8Iterator) 
             } };
             return alloc;
         },
-        else => return error.TODO,
-    }
-    return error.Fallthrough;
+        big_lambda => {
+            _ = str.nextCodepoint();
+            // return parse(gpa, str);
+            return error.TODOBigLambda;
+        },
+        else => {
+            const maybe_last_space = std.mem.lastIndexOfScalar(u8, str.bytes, ' ');
+            if (maybe_last_space) |last_space| {
+                // this is an application of some sort
+                _ = last_space;
+                return error.TODOApps;
+            }
+            // this is just a variable
+            const label = try parseLabel(
+                gpa,
+                str,
+                std.unicode.Utf8View.initUnchecked(""),
+            );
+            const alloc = try gpa.create(Term);
+            alloc.* = Term{ .variable = label };
+            return alloc;
+        },
+    };
 }
 
-test "parsing" {
+test "term parsing" {
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
 
-    const str = "λaaaaaaa:aaaaaaa.c";
+    const str = "λabcdefgh:bbbbbbbb.c";
     var iter = (try std.unicode.Utf8View.init(str)).iterator();
-    const parsed = try parse(allocator, .Start, &iter);
-    std.debug.print("{f}\n", .{parsed});
+    const parsed = try parse(allocator, &iter);
+    errdefer std.debug.print("\n{f}\n", .{parsed});
+    try std.testing.expectEqualDeep(
+        &Term{ .abstract = .{
+            .name = "abcdefgh",
+            .ty = FTy{ .ty_variable = "bbbbbbbb" },
+            .term = &Term{ .variable = "c" },
+        } },
+        parsed,
+    );
 }
-
-// test "parsing2" {
-//     var dba: std.heap.DebugAllocator(.{}) = .init;
-//     const allocator = dba.allocator();
-
-//     var str = (try std.unicode.Utf8View.init("λaaaaaaa:aaaaaaa.c")).iterator();
-//     const parsed = try parse(allocator, .Start, &str);
-//     std.debug.print("{f}\n", .{parsed});
-// }
