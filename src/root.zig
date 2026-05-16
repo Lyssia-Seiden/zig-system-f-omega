@@ -353,7 +353,7 @@ fn parseLabel(allocator: Allocator, str: *std.unicode.Utf8Iterator, term: []cons
     var label: std.ArrayList(u8) = try .initCapacity(allocator, 8);
     defer label.deinit(allocator);
     while (str.nextCodepointSlice()) |sl| {
-        if (std.mem.startsWith(u8, str.bytes[str.i - 1..], term)) break;
+        if (std.mem.startsWith(u8, str.bytes[str.i - 1 ..], term)) break;
         try label.appendSlice(allocator, sl);
     }
     for (0..term.len - 1) |_| { // we assume the terminator is byte valid
@@ -418,41 +418,10 @@ fn parseTy(
     str: *std.unicode.Utf8Iterator,
     term: []const u8,
 ) !*const FTy {
+    std.debug.print("parsing {s} until {s}\n", .{ str.bytes[str.i..], term });
     const forall = "∀";
-
-    const first_term = try (std.mem.indexOfPos(
-        u8,
-        str.bytes,
-        0,
-        term,
-    ) orelse error.NoTerm);
-    const maybe_first_forall = std.mem.indexOfPos(
-        u8,
-        str.bytes[str.i..first_term],
-        0,
-        forall,
-    );
-    const maybe_first_arrow = std.mem.indexOfPos(
-        u8,
-        str.bytes[str.i..first_term],
-        0,
-        "->",
-    );
-    std.debug.print("arr {any} {s}\n", .{ maybe_first_arrow, str.bytes[str.i..] });
-    if (maybe_first_arrow) |_| {
-        const alloc = try allocator.create(FTy);
-        const lhs = try parseTy(allocator, str, "->");
-        std.debug.print("arr {s}\n", .{str.bytes[str.i..]});
-        const rhs = try parseTy(allocator, str, term);
-        alloc.* = FTy{ .function = .{ .from = lhs, .to = rhs } };
-        return alloc;
-    }
-    if (maybe_first_forall) |first_forall| {
-        // if this is a universal type, it should start with forall
-        // and if it has forall, it should be universal
-        if (first_forall > 0) {
-            return error.InvalidCharTyName;
-        }
+    if (std.mem.startsWith(u8, str.bytes[str.i..], forall)) {
+        // discard ∀
         _ = str.nextCodepoint();
         const label = try parseLabel(allocator, str, ".");
         const rhs = try parseTy(allocator, str, term);
@@ -463,10 +432,30 @@ fn parseTy(
         } };
         return alloc;
     }
+
+    const first_term = try (std.mem.indexOfPos(
+        u8,
+        str.bytes[str.i..],
+        0,
+        term,
+    ) orelse error.NoTerm) + str.i;
+    const maybe_first_arrow = std.mem.indexOfPos(
+        u8,
+        str.bytes[str.i..first_term],
+        0,
+        "->",
+    );
+    if (maybe_first_arrow) |_| {
+        const alloc = try allocator.create(FTy);
+        const lhs = try parseTy(allocator, str, "->");
+        const rhs = try parseTy(allocator, str, term);
+        alloc.* = FTy{ .function = .{ .from = lhs, .to = rhs } };
+        return alloc;
+    }
+
     // else its a type variable
     const alloc = try allocator.create(FTy);
     alloc.* = FTy{ .ty_variable = try parseLabel(allocator, str, term) };
-    std.debug.print("var {s} term {s}\n", .{ alloc.*.ty_variable, term });
     return alloc;
 }
 
@@ -491,10 +480,10 @@ test "test type parsing func" {
 
     var str = ((try std.unicode.Utf8View.init("a->b.")).iterator());
     const res = try parseTy(
-            allocator,
-            &str,
-            ".",
-        );
+        allocator,
+        &str,
+        ".",
+    );
     std.debug.print("{f}\n", .{res});
     try std.testing.expectEqualDeep(
         &FTy{ .function = .{
