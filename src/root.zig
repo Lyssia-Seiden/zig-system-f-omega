@@ -443,7 +443,6 @@ fn parseTy(
         const alloc = try allocator.create(FTy);
         const lhs = try parseTy(allocator, str, "->");
         std.debug.print("arr {s}\n", .{str.bytes[str.i..]});
-        try std.testing.expect(false);
         const rhs = try parseTy(allocator, str, term);
         alloc.* = FTy{ .function = .{ .from = lhs, .to = rhs } };
         return alloc;
@@ -451,7 +450,6 @@ fn parseTy(
     if (maybe_first_forall) |first_forall| {
         // if this is a universal type, it should start with forall
         // and if it has forall, it should be universal
-        try std.testing.expect(false);
         if (first_forall > 0) {
             return error.InvalidCharTyName;
         }
