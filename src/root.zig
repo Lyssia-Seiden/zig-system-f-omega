@@ -557,7 +557,6 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
                 std.unicode.Utf8View.initUnchecked(":"),
             );
             const ty = try parseTy(gpa, str, ".");
-            // std.debug.print("{s}\n", .{str.bytes[str.i..]});
             const term = try parse(gpa, str);
             const alloc = try gpa.create(Term);
             alloc.* = Term{ .abstract = .{
@@ -573,11 +572,22 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
             return error.TODOBigLambda;
         },
         else => {
-            const maybe_last_space = std.mem.lastIndexOfScalar(u8, str.bytes, ' ');
+            const maybe_last_space = std.mem.lastIndexOfScalar(u8, str.bytes[str.i..], ' ');
             if (maybe_last_space) |last_space| {
                 // this is an application of some sort
-                _ = last_space;
-                return error.TODOApps;
+
+                // term application
+                const lhs_view = std.unicode.Utf8View.initUnchecked(str.bytes[0..last_space]);
+                var lhs_iter = lhs_view.iterator();
+                const lhs = try parse(gpa, &lhs_iter);
+                while (str.i <= last_space) _ = str.nextCodepoint();
+                const rhs = try parse(gpa, str);
+                const alloc = try gpa.create(Term);
+                alloc.* = Term{ .application = .{
+                    .lhs = lhs,
+                    .rhs = rhs,
+                } };
+                return alloc;
             }
             // this is just a variable
             const label = try parseLabel(
@@ -592,20 +602,67 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
     };
 }
 
+fn chk_parse(dba: Allocator, expected: Term, str: []const u8) !void {
+    var iter = (try std.unicode.Utf8View.init(str)).iterator();
+    const parsed = try parse(dba, &iter);
+    errdefer std.debug.print("\n{f} != {f}\n", .{ expected, parsed });
+    try std.testing.expectEqualDeep(
+        &expected,
+        parsed,
+    );
+}
+
 test "term parsing" {
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
 
-    const str = "λabcdefgh:bbbbbbbb.c";
-    var iter = (try std.unicode.Utf8View.init(str)).iterator();
-    const parsed = try parse(allocator, &iter);
-    errdefer std.debug.print("\n{f}\n", .{parsed});
-    try std.testing.expectEqualDeep(
-        &Term{ .abstract = .{
+    try chk_parse(allocator, Term{ .variable = "c" }, "c");
+
+    try chk_parse(allocator, Term{ .variable = "ccccccccc" }, "ccccccccc");
+
+    try chk_parse(
+        allocator,
+        Term{ .abstract = .{
             .name = "abcdefgh",
             .ty = FTy{ .ty_variable = "bbbbbbbb" },
             .term = &Term{ .variable = "c" },
         } },
-        parsed,
+        "λabcdefgh:bbbbbbbb.c",
+    );
+
+    try chk_parse(
+        allocator,
+        Term{ .abstract = .{
+            .name = "abcdefgh",
+            .ty = FTy{ .ty_variable = "bbbbbbbb" },
+            .term = &Term{ .abstract = .{
+                .name = "12345678",
+                .ty = FTy{ .ty_variable = "bbbbbbbb" },
+                .term = &Term{ .variable = "c" },
+            } },
+        } },
+        "λabcdefgh:bbbbbbbb.λ12345678:bbbbbbbb.c",
+    );
+
+    try chk_parse(
+        allocator,
+        Term{ .application = .{
+            .lhs = &Term{ .variable = "a" },
+            .rhs = &Term{ .variable = "b" },
+        } },
+        "a b",
+    );
+
+    try chk_parse(
+        allocator,
+        Term{ .application = .{
+            .lhs = &Term{ .abstract = .{
+                .name = "a",
+                .ty = FTy{ .ty_variable = "t" },
+                .term = &Term{ .variable = "a" },
+            } },
+            .rhs = &Term{ .variable = "b" },
+        } },
+        "λa:t.a b",
     );
 }
