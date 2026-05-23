@@ -24,7 +24,7 @@ pub fn replace(term: Term, target: Label, val: Term) Term {
             return Term{ .app = .{ .lhs = &replace(t.lhs.*, target, val), .rhs = &replace(t.rhs.*, target, val) } };
         },
         .ty_abs => |t| {
-            return Term{ .ty_abs = .{ .label = t.label, .term = &replace(t.term.*, target, val) } };
+            return Term{ .ty_abs = .{ .label = t.label, .kind = t.kind, .term = &replace(t.term.*, target, val) } };
         },
         .ty_app => |t| {
             return Term{ .ty_app = .{ .term = &replace(t.term.*, target, val), .ty = t.ty } };
@@ -52,7 +52,7 @@ pub fn tyReplace(gpa: Allocator, term: Term, target: Label, val: FTy) !Term {
             else {
                 const recurse_ptr = try gpa.create(Term);
                 recurse_ptr.* = try tyReplace(gpa, t.term.*, target, val);
-                return Term{ .ty_abs = .{ .label = t.label, .term = recurse_ptr } };
+                return Term{ .ty_abs = .{ .label = t.label, .kind = t.kind, .term = recurse_ptr } };
             }
         },
         .ty_app => |t| {
@@ -184,6 +184,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *Context) !FTy {
             alloc.* = try typeOf(gpa, t.term, ctx);
             return FTy{ .universal = .{
                 .label = t.label,
+                .kind = t.kind,
                 .ty = alloc,
             } };
         },
@@ -203,6 +204,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *Context) !FTy {
 test "tychk id" {
     const term = Term{ .ty_abs = .{
         .label = &.{2},
+        .kind = .proper,
         .term = &Term{ .abs = .{
             .name = &.{1},
             .ty = FTy{ .variable = &.{2} },
@@ -218,6 +220,7 @@ test "tychk id" {
     try std.testing.expectEqualDeep(
         FTy{ .universal = .{
             .label = &.{2},
+            .kind = .proper,
             .ty = &FTy{ .function = .{
                 .from = &FTy{ .variable = &.{2} },
                 .to = &FTy{ .variable = &.{2} },
@@ -254,6 +257,7 @@ test "tychk id app" {
 test "tychk forall" {
     const simple_term = Term{ .ty_abs = .{
         .label = &.{1},
+        .kind = .proper,
         .term = &Term{ .variable = &.{2} },
     } };
     errdefer std.debug.print("\n{f}\n", .{simple_term});
@@ -264,7 +268,11 @@ test "tychk forall" {
     try gamma.put(&.{2}, .{ .term = FTy{ .variable = &.{3} } });
 
     try std.testing.expectEqualDeep(
-        FTy{ .universal = .{ .label = &.{1}, .ty = &FTy{ .variable = &.{3} } } },
+        FTy{ .universal = .{
+            .label = &.{1},
+            .ty = &FTy{ .variable = &.{3} },
+            .kind = .proper,
+        } },
         typeOf(allocator, &simple_term, &gamma),
     );
 }

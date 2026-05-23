@@ -1,5 +1,4 @@
 const std = @import("std");
-
 pub const Label: type = []const u8;
 pub const FTy: type = union(enum) {
     variable: Label,
@@ -22,7 +21,7 @@ pub const FTy: type = union(enum) {
         rhs: *const FTy,
     },
 
-    fn replace(self: FTy, label: Label, ty: FTy) FTy {
+    pub fn replace(self: FTy, label: Label, ty: FTy) FTy {
         switch (self) {
             .variable => |l| {
                 if (std.mem.eql(u8, l, label)) return ty else return self;
@@ -41,7 +40,7 @@ pub const FTy: type = union(enum) {
                 self.op_abs.kind,
                 self.op_abs.ty,
             }),
-            .op_app => try writer.print("({f} {f})", .{ self.lhs, self.rhs }),
+            .op_app => try writer.print("({f} {f})", .{ self.op_app.lhs, self.op_app.rhs }),
         }
     }
 };
@@ -49,10 +48,10 @@ pub const Kind = union(enum) {
     proper,
     operator: struct { lhs: *const Kind, rhs: *const Kind },
 
-    pub fn format(self: FTy, writer: *std.Io.Writer) !void {
+    pub fn format(self: Kind, writer: *std.Io.Writer) !void {
         switch (self) {
             .proper => try writer.printAsciiChar('*', .{}),
-            .operator => try writer.print("({s} => {s})", .{
+            .operator => try writer.print("({f} => {f})", .{
                 self.operator.lhs,
                 self.operator.rhs,
             }),
