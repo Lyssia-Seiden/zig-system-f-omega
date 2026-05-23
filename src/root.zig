@@ -541,6 +541,7 @@ test "test type parsing complex" {
 }
 
 pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
+    std.debug.print("parsing {s}\n", .{str.bytes[str.i..]});
     const lambda = 'λ';
     const big_lambda = 'Λ';
 
@@ -548,7 +549,54 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
     if (char_sl.len == 0) return error.OutOfChars;
     const char: u21 = try std.unicode.utf8Decode(char_sl);
 
+    const maybe_last_space = std.mem.lastIndexOfScalar(
+        u8,
+        str.bytes[str.i..],
+        ' ',
+    );
+    if (maybe_last_space) |offset_last_space| {
+        const last_space = offset_last_space + str.i;
+        // this is an application of some sort
+
+        // term application
+        const lhs_view = std.unicode.Utf8View.initUnchecked(str.bytes[str.i..last_space]);
+        var lhs_iter = lhs_view.iterator();
+        const lhs = try parse(gpa, &lhs_iter);
+        while (str.i <= last_space) _ = str.nextCodepoint();
+        const rhs = try parse(gpa, str);
+        const alloc = try gpa.create(Term);
+        alloc.* = Term{ .application = .{
+            .lhs = lhs,
+            .rhs = rhs,
+        } };
+        return alloc;
+    }
+
     return switch (char) {
+        '(' => {
+            std.debug.print("parens!", .{});
+            const closing_idx = (std.mem.lastIndexOfScalar(
+                u8,
+                str.bytes[str.i..],
+                ')',
+            ) orelse {
+                std.debug.print("no closing {s}\n", .{str.bytes[str.i..]});
+                return error.NoClosingParen;
+            });
+            
+            const inner = std.unicode.Utf8View.initUnchecked(
+                str.bytes[str.i + 1 .. str.i + closing_idx],
+            );
+            std.debug.print("inner {s}\n", .{inner.bytes});
+
+            var inner_iter = inner.iterator();
+            const res = parse(gpa, &inner_iter);
+            // exhaust outer iter
+            var iter = inner.iterator();
+            while (iter.nextCodepoint()) |_| _ = str.nextCodepoint();
+            _ = str.nextCodepoint();
+            return res;
+        },
         lambda => {
             _ = str.nextCodepoint();
             const label = try parseLabel(
@@ -572,23 +620,7 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
             return error.TODOBigLambda;
         },
         else => {
-            const maybe_last_space = std.mem.lastIndexOfScalar(u8, str.bytes[str.i..], ' ');
-            if (maybe_last_space) |last_space| {
-                // this is an application of some sort
 
-                // term application
-                const lhs_view = std.unicode.Utf8View.initUnchecked(str.bytes[0..last_space]);
-                var lhs_iter = lhs_view.iterator();
-                const lhs = try parse(gpa, &lhs_iter);
-                while (str.i <= last_space) _ = str.nextCodepoint();
-                const rhs = try parse(gpa, str);
-                const alloc = try gpa.create(Term);
-                alloc.* = Term{ .application = .{
-                    .lhs = lhs,
-                    .rhs = rhs,
-                } };
-                return alloc;
-            }
             // this is just a variable
             const label = try parseLabel(
                 gpa,
@@ -663,6 +695,55 @@ test "term parsing" {
             } },
             .rhs = &Term{ .variable = "b" },
         } },
+        "(λa:t.a) b",
+    );
+
+    try chk_parse(
+        allocator,
+        Term{ .application = .{
+            .lhs = &Term{ .abstract = .{
+                .name = "a",
+                .ty = FTy{ .ty_variable = "t" },
+                .term = &Term{ .variable = "a" },
+            } },
+            .rhs = &Term{ .variable = "b" },
+        } },
         "λa:t.a b",
+    );
+
+    try chk_parse(
+        allocator,
+        Term{ .application = .{
+            .lhs = &Term{ .application = .{
+                .lhs = &Term{ .variable = "a" },
+                .rhs = &Term{ .variable = "b" },
+            } },
+            .rhs = &Term{ .variable = "c" },
+        } },
+        "a b c",
+    );
+
+    try chk_parse(
+        allocator,
+        Term{ .application = .{
+            .lhs = &Term{ .application = .{
+                .lhs = &Term{ .variable = "a" },
+                .rhs = &Term{ .variable = "b" },
+            } },
+            .rhs = &Term{ .variable = "c" },
+        } },
+        "(a b) c",
+    );
+
+    try chk_parse(
+        allocator,
+        Term{ .application = .{
+            .lhs = &Term{ .variable = "a" },
+            .rhs = &Term{ .application = .{
+                .lhs = &Term{ .variable = "b" },
+                .rhs = &Term{ .variable = "c" },
+            } },
+        } },
+        "a (b c)",
     );
 }
