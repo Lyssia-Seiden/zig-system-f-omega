@@ -32,38 +32,38 @@ pub fn replace(term: Term, target: Label, val: Term) Term {
     };
 }
 
-pub fn tyReplace(allocator: Allocator, term: Term, target: Label, val: FTy) !Term {
+pub fn tyReplace(gpa: Allocator, term: Term, target: Label, val: FTy) !Term {
     return switch (term) {
         .variable => term,
         .abs => |t| {
-            const recurse_ptr = try allocator.create(Term);
-            recurse_ptr.* = try tyReplace(allocator, t.term.*, target, val);
+            const recurse_ptr = try gpa.create(Term);
+            recurse_ptr.* = try tyReplace(gpa, t.term.*, target, val);
             return Term{ .abs = .{ .name = t.name, .ty = t.ty.replace(target, val), .term = recurse_ptr } };
         },
         .app => |t| {
-            const recurse_ptr: []Term = try allocator.alloc(Term, 2);
-            recurse_ptr[0] = try tyReplace(allocator, t.lhs.*, target, val);
-            recurse_ptr[1] = try tyReplace(allocator, t.rhs.*, target, val);
+            const recurse_ptr: []Term = try gpa.alloc(Term, 2);
+            recurse_ptr[0] = try tyReplace(gpa, t.lhs.*, target, val);
+            recurse_ptr[1] = try tyReplace(gpa, t.rhs.*, target, val);
             return Term{ .app = .{ .lhs = &recurse_ptr[0], .rhs = &recurse_ptr[1] } };
         },
         .ty_abs => |t| {
             if (std.mem.eql(u8, t.label, target))
-                return tyReplace(allocator, t.term.*, target, val)
+                return tyReplace(gpa, t.term.*, target, val)
             else {
-                const recurse_ptr = try allocator.create(Term);
-                recurse_ptr.* = try tyReplace(allocator, t.term.*, target, val);
+                const recurse_ptr = try gpa.create(Term);
+                recurse_ptr.* = try tyReplace(gpa, t.term.*, target, val);
                 return Term{ .ty_abs = .{ .label = t.label, .term = recurse_ptr } };
             }
         },
         .ty_app => |t| {
-            const recurse_ptr = try allocator.create(Term);
-            recurse_ptr.* = try tyReplace(allocator, t.term.*, target, val);
+            const recurse_ptr = try gpa.create(Term);
+            recurse_ptr.* = try tyReplace(gpa, t.term.*, target, val);
             return Term{ .ty_app = .{ .term = recurse_ptr, .ty = t.ty.replace(target, val) } };
         },
     };
 }
 
-pub fn reduce(allocator: Allocator, term: Term) !Term {
+pub fn reduce(gpa: Allocator, term: Term) !Term {
     errdefer std.debug.print("\n{f}\n", .{term});
     switch (term) {
         .variable => return term,
@@ -72,8 +72,8 @@ pub fn reduce(allocator: Allocator, term: Term) !Term {
             const lhs = t.lhs.*;
             const rhs = t.rhs.*;
 
-            const reduced_lhs = try reduce(allocator, lhs);
-            const reduced_rhs = try reduce(allocator, rhs);
+            const reduced_lhs = try reduce(gpa, lhs);
+            const reduced_rhs = try reduce(gpa, rhs);
             switch (reduced_lhs) {
                 .abs => |left_term| {
                     const name = left_term.name;
@@ -87,7 +87,13 @@ pub fn reduce(allocator: Allocator, term: Term) !Term {
         .ty_app => |t| {
             return switch (t.term.*) {
                 .ty_abs => |ta| {
-                    return tyReplace(allocator, ta.term.*, ta.label, t.ty);
+                    const replaced = try tyReplace(
+                        gpa,
+                        ta.term.*,
+                        ta.label,
+                        t.ty,
+                    );
+                    return reduce(gpa, replaced);
                 },
                 else => return term,
             };
@@ -140,7 +146,7 @@ test "double reduce id" {
 
 /// Find the type for a given term
 /// Uses a context to know the type of type variables
-pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
+pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *Context) !FTy {
     switch (term.*) {
         .variable => |label| if (ctx.get(label)) |binding| {
             return switch (binding) {
@@ -152,15 +158,15 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
             return error.UnderspecifiedType;
         },
         .abs => |t| { // use T-Abs
-            const alloc = try allocator.alloc(FTy, 2);
+            const alloc = try gpa.alloc(FTy, 2);
             alloc[0] = t.ty;
             try ctx.put(t.name, .{ .term = t.ty });
-            alloc[1] = try tyReduce(allocator, t.term, ctx);
+            alloc[1] = try typeOf(gpa, t.term, ctx);
             return FTy{ .function = .{ .from = &alloc[0], .to = &alloc[1] } };
         },
         .app => |t| { // use T-App
-            const lhs_ty = try tyReduce(allocator, t.lhs, ctx);
-            const rhs_ty = try tyReduce(allocator, t.rhs, ctx);
+            const lhs_ty = try typeOf(gpa, t.lhs, ctx);
+            const rhs_ty = try typeOf(gpa, t.rhs, ctx);
             switch (lhs_ty) {
                 .function => |lhs_f| {
                     if (std.meta.eql(lhs_f.from.*, rhs_ty)) {
@@ -174,8 +180,8 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
         },
         .ty_abs => |t| {
             try ctx.put(t.label, .{ .ty = .{} });
-            const alloc = try allocator.create(FTy);
-            alloc.* = try tyReduce(allocator, t.term, ctx);
+            const alloc = try gpa.create(FTy);
+            alloc.* = try typeOf(gpa, t.term, ctx);
             return FTy{ .universal = .{
                 .label = t.label,
                 .ty = alloc,
@@ -184,9 +190,9 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
         .ty_app => |t| {
             return switch (t.term.*) {
                 .ty_abs => |t_inner| {
-                    const alloc = try allocator.create(Term);
-                    alloc.* = try tyReplace(allocator, t_inner.term.*, t_inner.label, t.ty);
-                    return try tyReduce(allocator, alloc, ctx);
+                    const alloc = try gpa.create(Term);
+                    alloc.* = try tyReplace(gpa, t_inner.term.*, t_inner.label, t.ty);
+                    return try typeOf(gpa, alloc, ctx);
                 },
                 else => error.TypeMalformedApp,
             };
@@ -207,7 +213,7 @@ test "tychk id" {
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
     var gamma = Context.init(allocator);
-    const res = try tyReduce(allocator, &term, &gamma);
+    const res = try typeOf(allocator, &term, &gamma);
     errdefer std.debug.print("\n{f}\n", .{res});
     try std.testing.expectEqualDeep(
         FTy{ .universal = .{
@@ -237,7 +243,7 @@ test "tychk id app" {
     const allocator = dba.allocator();
     var gamma = Context.init(allocator);
     try gamma.put(&.{42}, .{ .term = FTy{ .variable = &.{2} } });
-    const res = try tyReduce(allocator, &term, &gamma);
+    const res = try typeOf(allocator, &term, &gamma);
     errdefer std.debug.print("\n{f}\n", .{res});
     try std.testing.expectEqualDeep(
         FTy{ .variable = &.{2} },
@@ -259,7 +265,7 @@ test "tychk forall" {
 
     try std.testing.expectEqualDeep(
         FTy{ .universal = .{ .label = &.{1}, .ty = &FTy{ .variable = &.{3} } } },
-        tyReduce(allocator, &simple_term, &gamma),
+        typeOf(allocator, &simple_term, &gamma),
     );
 }
 
