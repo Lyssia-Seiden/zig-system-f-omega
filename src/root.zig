@@ -8,7 +8,7 @@ pub const std_options: std.Options = .{
 
 pub const Label: type = []const u8;
 pub const FTy: type = union(enum) {
-    ty_variable: Label,
+    variable: Label,
     function: struct {
         from: *const FTy,
         to: *const FTy,
@@ -16,11 +16,21 @@ pub const FTy: type = union(enum) {
     universal: struct {
         label: Label,
         ty: *const FTy,
+        kind: Kind,
+    },
+    op_abs: struct {
+        label: Label,
+        kind: Kind,
+        ty: *const FTy,
+    },
+    op_app: struct {
+        lhs: *const FTy,
+        rhs: *const FTy,
     },
 
     fn replace(self: FTy, label: Label, ty: FTy) FTy {
         switch (self) {
-            .ty_variable => |l| {
+            .variable => |l| {
                 if (std.mem.eql(u8, l, label)) return ty else return self;
             },
             else => return self,
@@ -29,28 +39,49 @@ pub const FTy: type = union(enum) {
 
     pub fn format(self: FTy, writer: *std.Io.Writer) !void {
         switch (self) {
-            .ty_variable => try writer.print("{s}", .{self.ty_variable}),
+            .variable => try writer.print("{s}", .{self.variable}),
             .function => try writer.print("{f} -> {f}", .{ self.function.from, self.function.to }),
             .universal => try writer.print("∀{s}.{f}", .{ self.universal.label, self.universal.ty }),
+            .op_abs => try writer.print("λ{s}::{f}.{f}", .{
+                self.op_abs.label,
+                self.op_abs.kind,
+                self.op_abs.ty,
+            }),
+            .op_app => try writer.print("({f} {f})", .{ self.lhs, self.rhs }),
+        }
+    }
+};
+pub const Kind = union(enum) {
+    proper,
+    operator: struct { lhs: *const Kind, rhs: *const Kind },
+
+    pub fn format(self: FTy, writer: *std.Io.Writer) !void {
+        switch (self) {
+            .proper => try writer.printAsciiChar('*', .{}),
+            .operator => try writer.print("({s} => {s})", .{
+                self.operator.lhs,
+                self.operator.rhs,
+            }),
         }
     }
 };
 pub const Term = union(enum) {
     variable: Label,
-    abstract: struct {
+    abs: struct {
         name: Label,
         ty: FTy,
         term: *const Term,
     },
-    application: struct {
+    app: struct {
         lhs: *const Term,
         rhs: *const Term,
     },
-    type_abstraction: struct {
+    ty_abs: struct {
         label: Label,
+        kind: Kind,
         term: *const Term,
     },
-    type_application: struct {
+    ty_app: struct {
         term: *const Term,
         ty: FTy,
     },
@@ -61,11 +92,10 @@ pub const Term = union(enum) {
     ) !void {
         switch (self) {
             .variable => try writer.print("{s}", .{self.variable}),
-            .abstract => |t| try writer.print("λ{s}:{f}.({f})", .{ t.name, t.ty, t.term }),
-            .application => |t| try writer.print("({f} {f})", .{ t.lhs, t.rhs }),
-            // .type_abstraction => |t| try writer.print("λ{}.({f})", .{ t.label, t.term }),
-            .type_abstraction => |t| try writer.print("Λ{s}.({f})", .{ t.label, t.term }),
-            .type_application => |t| try writer.print("{f} [{f}]", .{ t.term, t.ty }),
+            .abs => |t| try writer.print("λ{s}:{f}.({f})", .{ t.name, t.ty, t.term }),
+            .app => |t| try writer.print("({f} {f})", .{ t.lhs, t.rhs }),
+            .ty_abs => |t| try writer.print("Λ{s}::{f}.({f})", .{ t.label, t.kind, t.term }),
+            .ty_app => |t| try writer.print("{f} [{f}]", .{ t.term, t.ty }),
         }
     }
 };
@@ -75,17 +105,17 @@ pub const Context = std.StringHashMap(union(enum) { term: FTy, ty: struct {} });
 pub fn replace(term: Term, target: Label, val: Term) Term {
     return switch (term) {
         .variable => val,
-        .abstract => |t| {
-            return Term{ .abstract = .{ .name = t.name, .ty = t.ty, .term = &replace(t.term.*, target, val) } };
+        .abs => |t| {
+            return Term{ .abs = .{ .name = t.name, .ty = t.ty, .term = &replace(t.term.*, target, val) } };
         },
-        .application => |t| {
-            return Term{ .application = .{ .lhs = &replace(t.lhs.*, target, val), .rhs = &replace(t.rhs.*, target, val) } };
+        .app => |t| {
+            return Term{ .app = .{ .lhs = &replace(t.lhs.*, target, val), .rhs = &replace(t.rhs.*, target, val) } };
         },
-        .type_abstraction => |t| {
-            return Term{ .type_abstraction = .{ .label = t.label, .term = &replace(t.term.*, target, val) } };
+        .ty_abs => |t| {
+            return Term{ .ty_abs = .{ .label = t.label, .term = &replace(t.term.*, target, val) } };
         },
-        .type_application => |t| {
-            return Term{ .type_application = .{ .term = &replace(t.term.*, target, val), .ty = t.ty } };
+        .ty_app => |t| {
+            return Term{ .ty_app = .{ .term = &replace(t.term.*, target, val), .ty = t.ty } };
         },
     };
 }
@@ -93,30 +123,30 @@ pub fn replace(term: Term, target: Label, val: Term) Term {
 pub fn tyReplace(allocator: Allocator, term: Term, target: Label, val: FTy) !Term {
     return switch (term) {
         .variable => term,
-        .abstract => |t| {
+        .abs => |t| {
             const recurse_ptr = try allocator.create(Term);
             recurse_ptr.* = try tyReplace(allocator, t.term.*, target, val);
-            return Term{ .abstract = .{ .name = t.name, .ty = t.ty.replace(target, val), .term = recurse_ptr } };
+            return Term{ .abs = .{ .name = t.name, .ty = t.ty.replace(target, val), .term = recurse_ptr } };
         },
-        .application => |t| {
+        .app => |t| {
             const recurse_ptr: []Term = try allocator.alloc(Term, 2);
             recurse_ptr[0] = try tyReplace(allocator, t.lhs.*, target, val);
             recurse_ptr[1] = try tyReplace(allocator, t.rhs.*, target, val);
-            return Term{ .application = .{ .lhs = &recurse_ptr[0], .rhs = &recurse_ptr[1] } };
+            return Term{ .app = .{ .lhs = &recurse_ptr[0], .rhs = &recurse_ptr[1] } };
         },
-        .type_abstraction => |t| {
+        .ty_abs => |t| {
             if (std.mem.eql(u8, t.label, target))
                 return tyReplace(allocator, t.term.*, target, val)
             else {
                 const recurse_ptr = try allocator.create(Term);
                 recurse_ptr.* = try tyReplace(allocator, t.term.*, target, val);
-                return Term{ .type_abstraction = .{ .label = t.label, .term = recurse_ptr } };
+                return Term{ .ty_abs = .{ .label = t.label, .term = recurse_ptr } };
             }
         },
-        .type_application => |t| {
+        .ty_app => |t| {
             const recurse_ptr = try allocator.create(Term);
             recurse_ptr.* = try tyReplace(allocator, t.term.*, target, val);
-            return Term{ .type_application = .{ .term = recurse_ptr, .ty = t.ty.replace(target, val) } };
+            return Term{ .ty_app = .{ .term = recurse_ptr, .ty = t.ty.replace(target, val) } };
         },
     };
 }
@@ -125,15 +155,15 @@ pub fn reduce(allocator: Allocator, term: Term) !Term {
     errdefer std.debug.print("\n{f}\n", .{term});
     switch (term) {
         .variable => return term,
-        .abstract => return term,
-        .application => |t| {
+        .abs => return term,
+        .app => |t| {
             const lhs = t.lhs.*;
             const rhs = t.rhs.*;
 
             const reduced_lhs = try reduce(allocator, lhs);
             const reduced_rhs = try reduce(allocator, rhs);
             switch (reduced_lhs) {
-                .abstract => |left_term| {
+                .abs => |left_term| {
                     const name = left_term.name;
                     const inner = left_term.term.*;
                     return replace(inner, name, reduced_rhs);
@@ -141,10 +171,10 @@ pub fn reduce(allocator: Allocator, term: Term) !Term {
                 else => return term,
             }
         },
-        .type_abstraction => return term,
-        .type_application => |t| {
+        .ty_abs => return term,
+        .ty_app => |t| {
             return switch (t.term.*) {
-                .type_abstraction => |ta| {
+                .ty_abs => |ta| {
                     return tyReplace(allocator, ta.term.*, ta.label, t.ty);
                 },
                 else => return term,
@@ -156,10 +186,10 @@ pub fn reduce(allocator: Allocator, term: Term) !Term {
 test "reduce id" {
     var allocator: std.heap.DebugAllocator(.{}) = .init;
     const term = Term{
-        .application = .{
-            .lhs = &Term{ .abstract = .{
+        .app = .{
+            .lhs = &Term{ .abs = .{
                 .name = &.{1},
-                .ty = FTy{ .ty_variable = &.{2} },
+                .ty = FTy{ .variable = &.{2} },
                 .term = &Term{ .variable = &.{1} },
             } },
             .rhs = &Term{ .variable = &.{42} },
@@ -175,21 +205,21 @@ test "reduce id" {
 
 test "double reduce id" {
     var allocator: std.heap.DebugAllocator(.{}) = .init;
-    const id = Term{ .abstract = .{
+    const id = Term{ .abs = .{
         .name = &.{1},
-        .ty = FTy{ .ty_variable = &.{2} },
+        .ty = FTy{ .variable = &.{2} },
         .term = &Term{ .variable = &.{1} },
     } };
-    const id2 = Term{ .abstract = .{
+    const id2 = Term{ .abs = .{
         .name = &.{3},
-        .ty = FTy{ .ty_variable = &.{2} },
+        .ty = FTy{ .variable = &.{2} },
         .term = &Term{ .variable = &.{3} },
     } };
-    const doubleId = Term{ .application = .{ .lhs = &id, .rhs = &id2 } };
+    const doubleId = Term{ .app = .{ .lhs = &id, .rhs = &id2 } };
     errdefer std.debug.print("\ndouble id {f}\n", .{doubleId});
     const reducedIds = try reduce(allocator.allocator(), doubleId);
     errdefer std.debug.print("\nreduced ids {f}\n", .{reducedIds});
-    const appliedDoubleId = Term{ .application = .{ .lhs = &doubleId, .rhs = &Term{ .variable = &.{67} } } };
+    const appliedDoubleId = Term{ .app = .{ .lhs = &doubleId, .rhs = &Term{ .variable = &.{67} } } };
     errdefer std.debug.print("\nappd double id {f}\n", .{appliedDoubleId});
     const reducedApplication = try reduce(allocator.allocator(), appliedDoubleId);
     errdefer std.debug.print("\nreduced application {f}\n", .{reducedApplication});
@@ -203,20 +233,20 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
         .variable => |label| if (ctx.get(label)) |binding| {
             return switch (binding) {
                 .term => binding.term,
-                .ty => FTy{ .ty_variable = term.variable },
+                .ty => FTy{ .variable = term.variable },
             };
         } else {
             errdefer std.debug.print("\n{f}\n", .{term});
             return error.UnderspecifiedType;
         },
-        .abstract => |t| { // use T-Abs
+        .abs => |t| { // use T-Abs
             const alloc = try allocator.alloc(FTy, 2);
             alloc[0] = t.ty;
             try ctx.put(t.name, .{ .term = t.ty });
             alloc[1] = try tyReduce(allocator, t.term, ctx);
             return FTy{ .function = .{ .from = &alloc[0], .to = &alloc[1] } };
         },
-        .application => |t| { // use T-App
+        .app => |t| { // use T-App
             const lhs_ty = try tyReduce(allocator, t.lhs, ctx);
             const rhs_ty = try tyReduce(allocator, t.rhs, ctx);
             switch (lhs_ty) {
@@ -230,7 +260,7 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
                 else => return error.NonfunctionApplied,
             }
         },
-        .type_abstraction => |t| {
+        .ty_abs => |t| {
             try ctx.put(t.label, .{ .ty = .{} });
             const alloc = try allocator.create(FTy);
             alloc.* = try tyReduce(allocator, t.term, ctx);
@@ -239,9 +269,9 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
                 .ty = alloc,
             } };
         },
-        .type_application => |t| {
+        .ty_app => |t| {
             return switch (t.term.*) {
-                .type_abstraction => |t_inner| {
+                .ty_abs => |t_inner| {
                     const alloc = try allocator.create(Term);
                     alloc.* = try tyReplace(allocator, t_inner.term.*, t_inner.label, t.ty);
                     return try tyReduce(allocator, alloc, ctx);
@@ -253,11 +283,11 @@ pub fn tyReduce(allocator: Allocator, term: *const Term, ctx: *Context) !FTy {
 }
 
 test "tychk id" {
-    const term = Term{ .type_abstraction = .{
+    const term = Term{ .ty_abs = .{
         .label = &.{2},
-        .term = &Term{ .abstract = .{
+        .term = &Term{ .abs = .{
             .name = &.{1},
-            .ty = FTy{ .ty_variable = &.{2} },
+            .ty = FTy{ .variable = &.{2} },
             .term = &Term{ .variable = &.{1} },
         } },
     } };
@@ -271,8 +301,8 @@ test "tychk id" {
         FTy{ .universal = .{
             .label = &.{2},
             .ty = &FTy{ .function = .{
-                .from = &FTy{ .ty_variable = &.{2} },
-                .to = &FTy{ .ty_variable = &.{2} },
+                .from = &FTy{ .variable = &.{2} },
+                .to = &FTy{ .variable = &.{2} },
             } },
         } },
         res,
@@ -280,10 +310,10 @@ test "tychk id" {
 }
 
 test "tychk id app" {
-    const term = Term{ .application = .{
-        .lhs = &Term{ .abstract = .{
+    const term = Term{ .app = .{
+        .lhs = &Term{ .abs = .{
             .name = &.{1},
-            .ty = FTy{ .ty_variable = &.{2} },
+            .ty = FTy{ .variable = &.{2} },
             .term = &Term{ .variable = &.{1} },
         } },
         .rhs = &Term{
@@ -294,17 +324,17 @@ test "tychk id app" {
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
     var gamma = Context.init(allocator);
-    try gamma.put(&.{42}, .{ .term = FTy{ .ty_variable = &.{2} } });
+    try gamma.put(&.{42}, .{ .term = FTy{ .variable = &.{2} } });
     const res = try tyReduce(allocator, &term, &gamma);
     errdefer std.debug.print("\n{f}\n", .{res});
     try std.testing.expectEqualDeep(
-        FTy{ .ty_variable = &.{2} },
+        FTy{ .variable = &.{2} },
         res,
     );
 }
 
 test "tychk forall" {
-    const simple_term = Term{ .type_abstraction = .{
+    const simple_term = Term{ .ty_abs = .{
         .label = &.{1},
         .term = &Term{ .variable = &.{2} },
     } };
@@ -313,10 +343,10 @@ test "tychk forall" {
     var dba: std.heap.DebugAllocator(.{}) = .init;
     const allocator = dba.allocator();
     var gamma = Context.init(allocator);
-    try gamma.put(&.{2}, .{ .term = FTy{ .ty_variable = &.{3} } });
+    try gamma.put(&.{2}, .{ .term = FTy{ .variable = &.{3} } });
 
     try std.testing.expectEqualDeep(
-        FTy{ .universal = .{ .label = &.{1}, .ty = &FTy{ .ty_variable = &.{3} } } },
+        FTy{ .universal = .{ .label = &.{1}, .ty = &FTy{ .variable = &.{3} } } },
         tyReduce(allocator, &simple_term, &gamma),
     );
 }
@@ -462,7 +492,7 @@ fn parseTy(
 
     // else its a type variable
     const alloc = try allocator.create(FTy);
-    alloc.* = FTy{ .ty_variable = try parseLabel(allocator, str, std.unicode.Utf8View.initUnchecked(term)) };
+    alloc.* = FTy{ .variable = try parseLabel(allocator, str, std.unicode.Utf8View.initUnchecked(term)) };
     return alloc;
 }
 
@@ -472,7 +502,7 @@ test "test type parsing var" {
 
     var str = ((try std.unicode.Utf8View.init("a.")).iterator());
     try std.testing.expectEqualDeep(
-        &FTy{ .ty_variable = "a" },
+        &FTy{ .variable = "a" },
         parseTy(
             allocator,
             &str,
@@ -494,8 +524,8 @@ test "test type parsing func" {
     errdefer std.debug.print("\n{f}\n", .{res});
     try std.testing.expectEqualDeep(
         &FTy{ .function = .{
-            .from = &FTy{ .ty_variable = "a" },
-            .to = &FTy{ .ty_variable = "b" },
+            .from = &FTy{ .variable = "a" },
+            .to = &FTy{ .variable = "b" },
         } },
         res,
     );
@@ -509,7 +539,7 @@ test "test type parsing univ" {
     try std.testing.expectEqualDeep(
         &FTy{ .universal = .{
             .label = "a",
-            .ty = &FTy{ .ty_variable = "b" },
+            .ty = &FTy{ .variable = "b" },
         } },
         parseTy(
             allocator,
@@ -528,8 +558,8 @@ test "test type parsing complex" {
         &FTy{ .universal = .{
             .label = "a",
             .ty = &FTy{ .function = .{
-                .from = &FTy{ .ty_variable = "a" },
-                .to = &FTy{ .ty_variable = "b" },
+                .from = &FTy{ .variable = "a" },
+                .to = &FTy{ .variable = "b" },
             } },
         } },
         parseTy(
@@ -565,7 +595,7 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
         while (str.i <= last_space) _ = str.nextCodepoint();
         const rhs = try parse(gpa, str);
         const alloc = try gpa.create(Term);
-        alloc.* = Term{ .application = .{
+        alloc.* = Term{ .app = .{
             .lhs = lhs,
             .rhs = rhs,
         } };
@@ -583,7 +613,7 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
                 std.debug.print("no closing {s}\n", .{str.bytes[str.i..]});
                 return error.NoClosingParen;
             });
-            
+
             const inner = std.unicode.Utf8View.initUnchecked(
                 str.bytes[str.i + 1 .. str.i + closing_idx],
             );
@@ -607,7 +637,7 @@ pub fn parse(gpa: Allocator, str: *std.unicode.Utf8Iterator) !*const Term {
             const ty = try parseTy(gpa, str, ".");
             const term = try parse(gpa, str);
             const alloc = try gpa.create(Term);
-            alloc.* = Term{ .abstract = .{
+            alloc.* = Term{ .abs = .{
                 .name = label,
                 .ty = ty.*,
                 .term = term,
@@ -654,9 +684,9 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .abstract = .{
+        Term{ .abs = .{
             .name = "abcdefgh",
-            .ty = FTy{ .ty_variable = "bbbbbbbb" },
+            .ty = FTy{ .variable = "bbbbbbbb" },
             .term = &Term{ .variable = "c" },
         } },
         "λabcdefgh:bbbbbbbb.c",
@@ -664,12 +694,12 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .abstract = .{
+        Term{ .abs = .{
             .name = "abcdefgh",
-            .ty = FTy{ .ty_variable = "bbbbbbbb" },
-            .term = &Term{ .abstract = .{
+            .ty = FTy{ .variable = "bbbbbbbb" },
+            .term = &Term{ .abs = .{
                 .name = "12345678",
-                .ty = FTy{ .ty_variable = "bbbbbbbb" },
+                .ty = FTy{ .variable = "bbbbbbbb" },
                 .term = &Term{ .variable = "c" },
             } },
         } },
@@ -678,7 +708,7 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .application = .{
+        Term{ .app = .{
             .lhs = &Term{ .variable = "a" },
             .rhs = &Term{ .variable = "b" },
         } },
@@ -687,10 +717,10 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .application = .{
-            .lhs = &Term{ .abstract = .{
+        Term{ .app = .{
+            .lhs = &Term{ .abs = .{
                 .name = "a",
-                .ty = FTy{ .ty_variable = "t" },
+                .ty = FTy{ .variable = "t" },
                 .term = &Term{ .variable = "a" },
             } },
             .rhs = &Term{ .variable = "b" },
@@ -700,10 +730,10 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .application = .{
-            .lhs = &Term{ .abstract = .{
+        Term{ .app = .{
+            .lhs = &Term{ .abs = .{
                 .name = "a",
-                .ty = FTy{ .ty_variable = "t" },
+                .ty = FTy{ .variable = "t" },
                 .term = &Term{ .variable = "a" },
             } },
             .rhs = &Term{ .variable = "b" },
@@ -713,8 +743,8 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .application = .{
-            .lhs = &Term{ .application = .{
+        Term{ .app = .{
+            .lhs = &Term{ .app = .{
                 .lhs = &Term{ .variable = "a" },
                 .rhs = &Term{ .variable = "b" },
             } },
@@ -725,8 +755,8 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .application = .{
-            .lhs = &Term{ .application = .{
+        Term{ .app = .{
+            .lhs = &Term{ .app = .{
                 .lhs = &Term{ .variable = "a" },
                 .rhs = &Term{ .variable = "b" },
             } },
@@ -737,9 +767,9 @@ test "term parsing" {
 
     try chk_parse(
         allocator,
-        Term{ .application = .{
+        Term{ .app = .{
             .lhs = &Term{ .variable = "a" },
-            .rhs = &Term{ .application = .{
+            .rhs = &Term{ .app = .{
                 .lhs = &Term{ .variable = "b" },
                 .rhs = &Term{ .variable = "c" },
             } },
