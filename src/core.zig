@@ -5,7 +5,7 @@ pub const Term = union(enum) {
     variable: u32,
     abs: struct { name_hint: []const u8, ty: Ty, term: *Term },
     app: struct { lhs: *Term, rhs: *Term },
-    ty_abs: struct { label: []const u8, kind: Kind, term: *Term },
+    ty_abs: struct { label: []const u8, kind: Kind = .proper, term: *Term },
     ty_app: struct { ty: Ty, term: *Term },
 
     pub fn isVal(self: Term) bool {
@@ -23,7 +23,7 @@ pub const Term = union(enum) {
 pub const Ty = union(enum) {
     variable: u32,
     function: struct { lhs: *Ty, rhs: *Ty },
-    universal: struct { label: []const u8, kind: Kind, inner: *Ty },
+    universal: struct { label: []const u8, kind: Kind = .proper, inner: *Ty },
     abs: struct { name_hint: []const u8, kind: Kind, ty: *Ty },
     app: struct { lhs: *Ty, rhs: *Ty },
 
@@ -66,7 +66,7 @@ pub const Kind = union(enum) {
     }
 
     pub fn eql(self: Kind, other: Kind) bool {
-        switch (self) {
+        return switch (self) {
             .proper => switch (other) {
                 .proper => true,
                 else => false,
@@ -76,7 +76,7 @@ pub const Kind = union(enum) {
                     self.operator.to.eql(other.operator.to.*),
                 else => false,
             },
-        }
+        };
     }
 };
 

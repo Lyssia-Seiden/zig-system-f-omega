@@ -1,5 +1,6 @@
 const std = @import("std");
 const core = @import("core.zig");
+const kinding = @import("kinding.zig");
 const Term = core.Term;
 const Ctx = core.Ctx;
 const Ty = core.Ty;
@@ -20,6 +21,13 @@ pub fn tyShift(ty: *Ty, delta: i64, cutoff: u32) void {
         .universal => {
             tyShift(ty.universal.inner, delta, cutoff + 1);
         },
+        .abs => {
+            tyShift(ty.abs.ty, delta, cutoff + 1);
+        },
+        .app => {
+            tyShift(ty.app.lhs, delta, cutoff);
+            tyShift(ty.app.rhs, delta, cutoff);
+        },
     }
 }
 
@@ -39,6 +47,13 @@ pub fn tySubst(ty: *Ty, target: u32, value: Ty) void {
         },
         .universal => {
             tySubst(ty.universal.inner, target + 1, value);
+        },
+        .abs => {
+            tySubst(ty.abs.ty, target + 1, value);
+        },
+        .app => {
+            tySubst(ty.app.lhs, target, value);
+            tySubst(ty.app.rhs, target, value);
         },
     }
 }
@@ -84,8 +99,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                     }
                     return error.MalformedArgument;
                 },
-                .variable => return error.ApplyingToNonFunction,
-                .universal => return error.ApplyingToNonFunction,
+                else => return error.ApplyingToNonFunction,
             }
         },
         .ty_abs => {
@@ -103,7 +117,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
             const inner_ty = try typeOf(gpa, term.ty_app.term, ctx);
             switch (inner_ty.*) {
                 .universal => {
-                    const kind = try error.TODO_get_kind_of_type;
+                    const kind = try kinding.kindOf(gpa, &term.ty_app.ty, ctx);
                     if (!inner_ty.universal.kind.eql(kind)) return error.UnkindApplicationFrownyFace;
                     var ty = term.ty_app.ty;
                     tyShift(&ty, 1, 0);

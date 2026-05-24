@@ -226,7 +226,7 @@ test "eval" {
         &Ctx{
             .name = "y",
             .binding = .name,
-            .pred = &Ctx{ .name = "T", .binding = .ty_var, .pred = null },
+            .pred = &Ctx{ .name = "T", .binding = .{ .ty_var = .proper }, .pred = null },
         },
     );
 
