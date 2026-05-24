@@ -1,10 +1,11 @@
 const std = @import("std");
+const util = @import("util.zig");
 
 pub const Term = union(enum) {
     variable: u32,
     abs: struct { name_hint: []const u8, ty: Ty, term: *Term },
     app: struct { lhs: *Term, rhs: *Term },
-    ty_abs: struct { label: []const u8, term: *Term },
+    ty_abs: struct { label: []const u8, kind: Kind, term: *Term },
     ty_app: struct { ty: Ty, term: *Term },
 
     pub fn isVal(self: Term) bool {
@@ -22,54 +23,67 @@ pub const Term = union(enum) {
 pub const Ty = union(enum) {
     variable: u32,
     function: struct { lhs: *Ty, rhs: *Ty },
-    universal: struct { label: []const u8, inner: *Ty },
+    universal: struct { label: []const u8, kind: Kind, inner: *Ty },
+    abs: struct { name_hint: []const u8, kind: Kind, ty: *Ty },
+    app: struct { lhs: *Ty, rhs: *Ty },
 
     pub fn format(self: Ty, writer: *std.Io.Writer) !void {
         switch (self) {
             .variable => try writer.print("{}", .{self.variable}),
             .function => try writer.print(
-                "{f} -> {f}",
+                "({f} -> {f})",
                 .{ self.function.lhs, self.function.rhs },
             ),
             .universal => try writer.print(
-                "∀{s}.{f}",
-                .{ self.universal.label, self.universal.inner },
+                "∀{s}::{f}.{f}",
+                .{ self.universal.label, self.universal.kind, self.universal.inner },
+            ),
+            .abs => try writer.print(
+                "λ{s}::{f}.{f}",
+                .{ self.abs.name_hint, self.abs.kind, self.abs.ty },
+            ),
+            .app => try writer.print(
+                "({f} {f})",
+                .{ self.app.lhs, self.app.rhs },
             ),
         }
     }
 
     pub fn eql(self: Ty, other: Ty) bool {
-        return switch (self) {
-            .variable => switch (other) {
-                .variable => true,
+        return util.deepEql(self, other);
+    }
+};
+
+pub const Kind = union(enum) {
+    proper,
+    operator: struct { from: *const Kind, to: *const Kind },
+
+    pub fn format(self: Kind, writer: *std.Io.Writer) !void {
+        switch (self) {
+            .proper => try writer.print("*", .{}),
+            .operator => try writer.print("({f} => {f})", .{ self.operator.from, self.operator.to }),
+        }
+    }
+
+    pub fn eql(self: Kind, other: Kind) bool {
+        switch (self) {
+            .proper => switch (other) {
+                .proper => true,
                 else => false,
             },
-            .function => {
-                return switch (other) {
-                    .function => {
-                        const lhs = self.function.lhs.*;
-                        const rhs = self.function.rhs.*;
-
-                        return lhs.eql(other.function.lhs.*) and rhs.eql(other.function.rhs.*);
-                    },
-                    else => false,
-                };
+            .operator => switch (other) {
+                .operator => self.operator.from.eql(other.operator.from.*) and
+                    self.operator.to.eql(other.operator.to.*),
+                else => false,
             },
-            .universal => {
-                return switch (other) {
-                    .universal => self.universal.inner.eql(other.universal.inner.*) and
-                        std.mem.eql(u8, self.universal.label, other.universal.label),
-                    else => false,
-                };
-            },
-        };
+        }
     }
 };
 
 pub const Binding = union(enum) {
     name,
     variable: Ty,
-    ty_var,
+    ty_var: Kind,
 };
 
 pub const Ctx = struct {

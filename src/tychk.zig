@@ -3,6 +3,7 @@ const core = @import("core.zig");
 const Term = core.Term;
 const Ctx = core.Ctx;
 const Ty = core.Ty;
+const Kind = core.Kind;
 const Binding = core.Binding;
 const Allocator = std.mem.Allocator;
 
@@ -88,7 +89,11 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
             }
         },
         .ty_abs => {
-            const new_ctx = Ctx{ .name = term.ty_abs.label, .binding = .ty_var, .pred = ctx };
+            const new_ctx = Ctx{
+                .name = term.ty_abs.label,
+                .binding = .{ .ty_var = term.ty_abs.kind },
+                .pred = ctx,
+            };
             const inner_ty = try typeOf(gpa, term.ty_abs.term, &new_ctx);
             const alloc = try gpa.create(Ty);
             alloc.* = Ty{ .universal = .{ .inner = inner_ty, .label = term.ty_abs.label } };
@@ -98,6 +103,8 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
             const inner_ty = try typeOf(gpa, term.ty_app.term, ctx);
             switch (inner_ty.*) {
                 .universal => {
+                    const kind = try error.TODO_get_kind_of_type;
+                    if (!inner_ty.universal.kind.eql(kind)) return error.UnkindApplicationFrownyFace;
                     var ty = term.ty_app.ty;
                     tyShift(&ty, 1, 0);
                     tySubst(inner_ty.universal.inner, 0, ty);
@@ -244,7 +251,7 @@ test "tychk systemf" {
             .ty = .{ .variable = 0 },
             .term = &poly_id,
         } };
-        const ctx = Ctx{ .name = "β", .binding = .ty_var, .pred = null };
+        const ctx = Ctx{ .name = "β", .binding = .{ .ty_var = .proper }, .pred = null };
         const ty = try typeOf(gpa, &ty_app, &ctx);
         try std.testing.expect(ty.* == .function);
         try std.testing.expect(ty.function.lhs.* == .variable);
