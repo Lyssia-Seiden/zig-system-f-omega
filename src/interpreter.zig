@@ -34,6 +34,34 @@ test "shift" {
     try std.testing.expectEqual(1, term.variable);
 }
 
+test "shift respects cutoff" {
+    var term = Term{ .variable = 0 };
+    shift(&term, 1, 1);
+    try std.testing.expectEqual(0, term.variable);
+}
+
+test "shift under abs" {
+    // a free var (index 1) inside `λx:α.<var 1>` should be shifted to 2;
+    // the bound var (index 0) should stay 0
+    var inner_free = Term{ .variable = 1 };
+    var abs_free = Term{ .abs = .{
+        .name_hint = "x",
+        .ty = .{ .variable = 0 },
+        .term = &inner_free,
+    } };
+    shift(&abs_free, 1, 0);
+    try std.testing.expectEqual(2, inner_free.variable);
+
+    var inner_bound = Term{ .variable = 0 };
+    var abs_bound = Term{ .abs = .{
+        .name_hint = "x",
+        .ty = .{ .variable = 0 },
+        .term = &inner_bound,
+    } };
+    shift(&abs_bound, 1, 0);
+    try std.testing.expectEqual(0, inner_bound.variable);
+}
+
 /// [target -> value]term
 /// [j -> s]t
 /// cutoff should be initialized to 0
@@ -139,13 +167,38 @@ test "eval step var" {
     const ref_term = Term{ .variable = 0 };
     const term = try gpa.create(Term);
     term.* = Term{ .variable = 0 };
-    _ = try evalStep(
+    const reduced = try evalStep(
         gpa,
         term,
         &Ctx{ .name = "x", .binding = .name, .pred = null },
     );
+    try std.testing.expect(!reduced);
     try std.testing.expectEqualDeep(&ref_term, term);
     gpa.destroy(term);
+}
+
+test "eval step value abs" {
+    const gpa = std.testing.allocator;
+
+    var body = Term{ .variable = 0 };
+    var term = Term{ .abs = .{
+        .name_hint = "x",
+        .ty = .{ .variable = 0 },
+        .term = &body,
+    } };
+    const reduced = try evalStep(gpa, &term, null);
+    try std.testing.expect(!reduced);
+    try std.testing.expect(term == .abs);
+}
+
+test "eval step value ty_abs" {
+    const gpa = std.testing.allocator;
+
+    var body = Term{ .variable = 0 };
+    var term = Term{ .ty_abs = .{ .label = "α", .term = &body } };
+    const reduced = try evalStep(gpa, &term, null);
+    try std.testing.expect(!reduced);
+    try std.testing.expect(term == .ty_abs);
 }
 
 pub fn eval(gpa: Allocator, term: *Term, ctx: ?*const Ctx) !void {

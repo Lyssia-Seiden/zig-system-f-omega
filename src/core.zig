@@ -57,7 +57,7 @@ pub const Ty = union(enum) {
             },
             .universal => {
                 return switch (other) {
-                    .universal => self.universal.inner.eql(other.universal.inner) and
+                    .universal => self.universal.inner.eql(other.universal.inner.*) and
                         std.mem.eql(u8, self.universal.label, other.universal.label),
                     else => false,
                 };
