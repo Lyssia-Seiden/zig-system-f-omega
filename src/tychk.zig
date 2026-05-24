@@ -25,7 +25,7 @@ pub fn tyShift(ty: *Ty, delta: i64, cutoff: u32) void {
 /// [target -> value]ty
 /// [j -> s]t
 pub fn tySubst(ty: *Ty, target: u32, value: Ty) void {
-    switch (ty) {
+    switch (ty.*) {
         .variable => {
             if (ty.variable == target) ty.* = value;
         },

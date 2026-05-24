@@ -60,7 +60,8 @@ fn tyTermSubst(term: *Term, target: u32, value: Ty, depth: u32) void {
     switch (term.*) {
         .variable => {},
         .abs => {
-            tychk.tySubst(term.abs.ty, target, value);
+            var ty = term.abs.ty;
+            tychk.tySubst(&ty, target, value);
             tyTermSubst(term.abs.term, target, value, depth + 1);
         },
         .app => {
@@ -69,7 +70,8 @@ fn tyTermSubst(term: *Term, target: u32, value: Ty, depth: u32) void {
         },
         .ty_abs => tyTermSubst(term.ty_abs.term, target, value, depth + 1),
         .ty_app => {
-            tychk.tySubst(term.ty_app.ty, target, value);
+            var ty = term.ty_app.ty;
+            tychk.tySubst(&ty, target, value);
             tyTermSubst(term.ty_app.term, target, value, depth + 1);
         },
     }
@@ -101,18 +103,33 @@ pub fn evalStep(gpa: Allocator, term: *Term, ctx: ?*const Ctx) !bool {
                         gpa.destroy(lhs.abs.term);
                         return true;
                     } else if (lhs.isVal()) {
-                        const new_rhs = try evalStep(gpa, rhs, ctx);
-                        return new_rhs;
+                        _ = try evalStep(gpa, rhs, ctx);
+                        return true;
                     } else {
-                        const new_lhs = try evalStep(gpa, lhs, ctx);
-                        return new_lhs;
+                        _ = try evalStep(gpa, lhs, ctx);
+                        return true;
                     }
                 },
                 else => false,
             };
         },
-        .ty_abs => return error.TODO,
-        .ty_app => return error.TODO,
+        .ty_abs => return false,
+        .ty_app => {
+            switch (term.ty_app.term.*) {
+                .ty_abs => {
+                    var ty = term.ty_app.ty;
+                    const inner_term = term.ty_app.term;
+                    tychk.tyShift(&ty, 1, 0);
+                    tyTermSubst(inner_term, 0, ty, 0);
+                    tychk.tyShift(&ty, -1, 0);
+                    return true;
+                },
+                else => {
+                    _ = try evalStep(gpa, term.ty_app.term, ctx);
+                    return true;
+                },
+            }
+        },
     }
 }
 
