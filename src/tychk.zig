@@ -1,4 +1,3 @@
-
 const std = @import("std");
 const core = @import("core.zig");
 const Term = core.Term;
@@ -7,12 +6,12 @@ const Ty = core.Ty;
 const Binding = core.Binding;
 const Allocator = std.mem.Allocator;
 
-pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*Ty {
+pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*const Ty {
     switch (term.*) {
         .variable => {
             if (ctx.get(term.variable)) |memo| {
                 return switch (memo) {
-                    .variable => return memo.variable,
+                    .variable => return &memo.variable,
                     else => return error.VariableImproperlyTyped,
                 };
             } else {
@@ -22,14 +21,14 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*Ty {
         .abs => {
             const ctx_new = Ctx{
                 .name = term.abs.name_hint,
-                .binding = Binding{.variable = term.abs.ty},
+                .binding = Binding{ .variable = term.abs.ty },
                 .pred = ctx,
             };
-            const res = try gpa.alloc(Ty, 3);
-            res[0] = try typeOf(gpa, term.abs.term, ctx_new);
-            res[1] = term.abs.ty;
-            res[2] = .{ .function = .{.lhs = term.abs.ty, .rhs = res} };
-            return res[2];
+            const res = try gpa.alloc(Ty, 2);
+            const rhs = try typeOf(gpa, term.abs.term, &ctx_new);
+            res[0] = term.abs.ty;
+            res[1] = .{ .function = .{ .lhs = &res[0], .rhs = rhs } };
+            return &res[1];
         },
         .app => {
             const lhs_ty = try typeOf(gpa, term.app.lhs, ctx);
@@ -39,13 +38,68 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*Ty {
                     const lhs_from = lhs_ty.function.lhs;
                     const lhs_to = lhs_ty.function.rhs;
 
-                    if (rhs_ty.eql(lhs_from)) {
+                    if (rhs_ty.eql(lhs_from.*)) {
                         return lhs_to;
                     }
                     return error.MalformedArgument;
                 },
-                .atomic => return error.ApplyingToNonFunction
+                .atomic => return error.ApplyingToNonFunction,
             }
-        }
+        },
+    }
+}
+
+test "tychk" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const empty_ctx = Ctx{ .name = "_", .binding = .name, .pred = null };
+
+    // λx:α.x  :  α -> α
+    {
+        var body = Term{ .variable = 0 };
+        var id = Term{ .abs = .{
+            .name_hint = "x",
+            .ty = .atomic,
+            .term = &body,
+        } };
+
+        const ty = try typeOf(gpa, &id, &empty_ctx);
+        try std.testing.expect(ty.* == .function);
+        try std.testing.expect(ty.function.lhs.* == .atomic);
+        try std.testing.expect(ty.function.rhs.* == .atomic);
+    }
+
+    // y  :  α    (under ctx y:α)
+    {
+        var y = Term{ .variable = 0 };
+        const ctx = Ctx{
+            .name = "y",
+            .binding = .{ .variable = .atomic },
+            .pred = null,
+        };
+        const ty = try typeOf(gpa, &y, &ctx);
+        try std.testing.expect(ty.* == .atomic);
+    }
+
+    // (λx:α.x) y  :  α    (under ctx y:α)
+    {
+        var body = Term{ .variable = 0 };
+        var id = Term{ .abs = .{
+            .name_hint = "x",
+            .ty = .atomic,
+            .term = &body,
+        } };
+        var y = Term{ .variable = 0 };
+        var app = Term{ .app = .{ .lhs = &id, .rhs = &y } };
+
+        const ctx = Ctx{
+            .name = "y",
+            .binding = .{ .variable = .atomic },
+            .pred = null,
+        };
+        const ty = try typeOf(gpa, &app, &ctx);
+        try std.testing.expect(ty.* == .atomic);
     }
 }

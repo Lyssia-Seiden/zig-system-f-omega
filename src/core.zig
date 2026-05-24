@@ -19,7 +19,7 @@ pub const Term = union(enum) {
 
 pub const Ty = union(enum) {
     atomic,
-    function: struct { lhs: *Ty, rhs: *Ty },
+    function: struct { lhs: *const Ty, rhs: *const Ty },
 
     pub fn format(self: Ty, writer: *std.Io.Writer) !void {
         switch (self) {
@@ -32,13 +32,13 @@ pub const Ty = union(enum) {
     }
 
     pub fn eql(self: Ty, other: Ty) bool {
-        switch (self) {
+        return switch (self) {
             .atomic => switch (other) {
                 .atomic => true,
                 .function => false,
             },
             .function => {
-                switch (other) {
+                return switch (other) {
                     .atomic => false,
                     .function => {
                         const lhs = self.function.lhs.*;
@@ -46,9 +46,9 @@ pub const Ty = union(enum) {
 
                         return lhs.eql(other.function.lhs.*) and rhs.eql(other.function.rhs.*);
                     },
-                }
+                };
             },
-        }
+        };
     }
 };
 
