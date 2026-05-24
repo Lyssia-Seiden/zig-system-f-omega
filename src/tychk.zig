@@ -27,7 +27,10 @@ pub fn tyShift(ty: *Ty, delta: i64, cutoff: u32) void {
 pub fn tySubst(ty: *Ty, target: u32, value: Ty) void {
     switch (ty.*) {
         .variable => {
-            if (ty.variable == target) ty.* = value;
+            if (ty.variable == target) {
+                ty.* = value;
+                // tyShift(ty, target, 0);
+            }
         },
         .function => {
             tySubst(ty.function.lhs, target, value);
@@ -39,10 +42,10 @@ pub fn tySubst(ty: *Ty, target: u32, value: Ty) void {
     }
 }
 
-pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*Ty {
+pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
     switch (term.*) {
         .variable => {
-            if (ctx.get(term.variable)) |memo| {
+            if (ctx.?.get(term.variable)) |memo| {
                 return switch (memo) {
                     .variable => {
                         const alloc = try gpa.create(Ty);
@@ -84,8 +87,26 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*Ty {
                 .universal => return error.ApplyingToNonFunction,
             }
         },
-        .ty_abs => return error.NotImplemented,
-        .ty_app => return error.NotImplemented,
+        .ty_abs => {
+            const new_ctx = Ctx{ .name = term.ty_abs.label, .binding = .ty_var, .pred = ctx };
+            const inner_ty = try typeOf(gpa, term.ty_abs.term, &new_ctx);
+            const alloc = try gpa.create(Ty);
+            alloc.* = Ty{ .universal = .{ .inner = inner_ty, .label = term.ty_abs.label } };
+            return alloc;
+        },
+        .ty_app => {
+            const inner_ty = try typeOf(gpa, term.ty_app.term, ctx);
+            switch (inner_ty.*) {
+                .universal => {
+                    var ty = term.ty_app.ty;
+                    tyShift(&ty, 1, 0);
+                    tySubst(inner_ty.universal.inner, 0, ty);
+                    tyShift(&ty, -1, 0);
+                    return inner_ty.universal.inner;
+                },
+                else => return error.ApplyingNonUniversal,
+            }
+        },
     }
 }
 

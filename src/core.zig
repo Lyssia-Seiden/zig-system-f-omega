@@ -26,7 +26,7 @@ pub const Ty = union(enum) {
 
     pub fn format(self: Ty, writer: *std.Io.Writer) !void {
         switch (self) {
-            .variable => try writer.print("α", .{}),
+            .variable => try writer.print("{}", .{self.variable}),
             .function => try writer.print(
                 "{f} -> {f}",
                 .{ self.function.lhs, self.function.rhs },
@@ -89,7 +89,7 @@ pub const Ctx = struct {
 };
 
 pub const TermWCtx = struct {
-    term: *Term,
+    term: *const Term,
     ctx: ?*const Ctx,
 
     pub fn format(self: TermWCtx, writer: *std.Io.Writer) !void {
