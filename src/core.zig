@@ -1,14 +1,25 @@
 const std = @import("std");
 
-const Term = union(enum) {
+pub const Term = union(enum) {
     variable: u32,
-    abs: struct { name_hint: []const u8, term: *const Term },
-    app: struct { lhs: *const Term, rhs: *const Term },
+    abs: struct { name_hint: []const u8, term: *Term },
+    app: struct { lhs: *Term, rhs: *Term },
+
+    pub fn isVal(self: Term) bool {
+        return switch (self) {
+            .abs, .variable => true,
+            else => false,
+        };
+    }
+
+    pub fn print(self: *Term, ctx: ?*const Ctx) void {
+        std.debug.print("{f}\n", .{TermWCtx{.term = self, .ctx = ctx}});
+    }
 };
 
-const Ty = union(enum) {};
+pub const Ty = union(enum) {};
 
-const Ctx = struct {
+pub const Ctx = struct {
     name: []const u8,
     binding: union(enum) {
         name,
@@ -20,14 +31,14 @@ const Ctx = struct {
     }
 };
 
-const TermWCtx = struct {
-    term: *const Term,
+pub const TermWCtx = struct {
+    term: *Term,
     ctx: ?*const Ctx,
 
     pub fn format(self: TermWCtx, writer: *std.Io.Writer) !void {
         switch (self.term.*) {
             // TODO handle de brujin niceties
-            .variable => try writer.print("{s}", .{self.ctx.?.name}),
+            .variable => try writer.print("{s}/{}", .{self.ctx.?.name, self.term.variable}),
             .abs => try writer.print(
                 "λ{s}.{f}",
                 .{
@@ -48,9 +59,10 @@ const TermWCtx = struct {
 };
 
 test "term printing" {
-    const id = Term{ .abs = .{
+    var inner = Term{ .variable = 0 };
+    var id = Term{ .abs = .{
         .name_hint = "x",
-        .term = &Term{ .variable = 0 },
+        .term = &inner,
     } };
-    std.debug.print("{f}", .{TermWCtx{.term = &id, .ctx = null}});
+    std.debug.print("{f}", .{TermWCtx{ .term = &id, .ctx = null }});
 }
