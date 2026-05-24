@@ -3,10 +3,17 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const core = @import("core.zig");
-const FTy = core.FTy;
+const FTy = core.Ty;
 const Term = core.Term;
 const Kind = core.Kind;
 const Label = core.Label;
+
+const parser = @import("parser.zig");
+
+test {
+    // _ = parser;
+    std.testing.refAllDecls(@This());
+}
 
 pub const std_options: std.Options = .{
     .fmt_max_depth = 127,

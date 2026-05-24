@@ -1,27 +1,27 @@
 const std = @import("std");
 pub const Label: type = []const u8;
-pub const FTy: type = union(enum) {
+pub const Ty: type = union(enum) {
     variable: Label,
     function: struct {
-        from: *const FTy,
-        to: *const FTy,
+        from: *const Ty,
+        to: *const Ty,
     },
     universal: struct {
         label: Label,
-        ty: *const FTy,
+        ty: *const Ty,
         kind: Kind,
     },
     op_abs: struct {
         label: Label,
         kind: Kind,
-        ty: *const FTy,
+        ty: *const Ty,
     },
     op_app: struct {
-        lhs: *const FTy,
-        rhs: *const FTy,
+        lhs: *const Ty,
+        rhs: *const Ty,
     },
 
-    pub fn replace(self: FTy, label: Label, ty: FTy) FTy {
+    pub fn replace(self: Ty, label: Label, ty: Ty) Ty {
         switch (self) {
             .variable => |l| {
                 if (std.mem.eql(u8, l, label)) return ty else return self;
@@ -30,7 +30,7 @@ pub const FTy: type = union(enum) {
         }
     }
 
-    pub fn format(self: FTy, writer: *std.Io.Writer) !void {
+    pub fn format(self: Ty, writer: *std.Io.Writer) !void {
         switch (self) {
             .variable => try writer.print("{s}", .{self.variable}),
             .function => try writer.print("{f} -> {f}", .{ self.function.from, self.function.to }),
@@ -62,7 +62,7 @@ pub const Term = union(enum) {
     variable: Label,
     abs: struct {
         name: Label,
-        ty: FTy,
+        ty: Ty,
         term: *const Term,
     },
     app: struct {
@@ -76,7 +76,7 @@ pub const Term = union(enum) {
     },
     ty_app: struct {
         term: *const Term,
-        ty: FTy,
+        ty: Ty,
     },
 
     pub fn format(
@@ -92,4 +92,3 @@ pub const Term = union(enum) {
         }
     }
 };
-

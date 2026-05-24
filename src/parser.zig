@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const core = @import("core.zig");
-const FTy = core.FTy;
+const FTy = core.Ty;
 const Term = core.Term;
 const Kind = core.Kind;
 const Label = core.Label;
