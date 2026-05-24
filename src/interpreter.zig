@@ -111,7 +111,7 @@ test "eval" {
     id_body.* = Term{ .variable = 0 };
 
     const id = try gpa.create(Term);
-    id.* = Term{ .abs = .{ .name_hint = "x",.ty = .atomic, .term = id_body } };
+    id.* = Term{ .abs = .{ .name_hint = "x", .ty = .@"var", .term = id_body } };
 
     const term = try gpa.create(Term);
     term.* = Term{ .app = .{ .lhs = id, .rhs = arg } };

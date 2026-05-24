@@ -6,12 +6,49 @@ const Ty = core.Ty;
 const Binding = core.Binding;
 const Allocator = std.mem.Allocator;
 
-pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*const Ty {
+pub fn tyShift(ty: *Ty, delta: i32, cutoff: u32) !void {
+    switch (ty) {
+        .variable => {
+            if (ty.variable >= cutoff)
+                ty.variable = @intCast(@as(i32, @intCast(ty.variable)) + delta);
+        },
+        .function => {
+            tyShift(ty.function.lhs, delta, cutoff);
+            tyShift(ty.function.rhs, delta, cutoff);
+        },
+        .universal => {
+            tyShift(ty.universal.inner, delta, cutoff + 1);
+        },
+    }
+}
+
+/// [target -> value]ty
+/// [j -> s]t
+pub fn tySubst(ty: *Ty, target: u32, value: Ty) void {
+    switch (ty) {
+        .variable => {
+            if (ty.variable == target) ty.* = value;
+        },
+        .function => {
+            tySubst(ty.function.lhs, target, value);
+            tySubst(ty.function.rhs, target, value);
+        },
+        .universal => {
+            tySubst(ty.universal.inner, target + 1, value);
+        },
+    }
+}
+
+pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*Ty {
     switch (term.*) {
         .variable => {
             if (ctx.get(term.variable)) |memo| {
                 return switch (memo) {
-                    .variable => return &memo.variable,
+                    .variable => {
+                        const alloc = try gpa.create(Ty);
+                        alloc.* = memo.variable;
+                        return alloc;
+                    },
                     else => return error.VariableImproperlyTyped,
                 };
             } else {
@@ -43,7 +80,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: *const Ctx) !*const Ty {
                     }
                     return error.MalformedArgument;
                 },
-                .atomic => return error.ApplyingToNonFunction,
+                .variable => return error.ApplyingToNonFunction,
             }
         },
     }
@@ -61,14 +98,14 @@ test "tychk" {
         var body = Term{ .variable = 0 };
         var id = Term{ .abs = .{
             .name_hint = "x",
-            .ty = .atomic,
+            .ty = .variable,
             .term = &body,
         } };
 
         const ty = try typeOf(gpa, &id, &empty_ctx);
         try std.testing.expect(ty.* == .function);
-        try std.testing.expect(ty.function.lhs.* == .atomic);
-        try std.testing.expect(ty.function.rhs.* == .atomic);
+        try std.testing.expect(ty.function.lhs.* == .variable);
+        try std.testing.expect(ty.function.rhs.* == .variable);
     }
 
     // y  :  α    (under ctx y:α)
@@ -76,11 +113,11 @@ test "tychk" {
         var y = Term{ .variable = 0 };
         const ctx = Ctx{
             .name = "y",
-            .binding = .{ .variable = .atomic },
+            .binding = .{ .variable = .variable },
             .pred = null,
         };
         const ty = try typeOf(gpa, &y, &ctx);
-        try std.testing.expect(ty.* == .atomic);
+        try std.testing.expect(ty.* == .variable);
     }
 
     // (λx:α.x) y  :  α    (under ctx y:α)
@@ -88,7 +125,7 @@ test "tychk" {
         var body = Term{ .variable = 0 };
         var id = Term{ .abs = .{
             .name_hint = "x",
-            .ty = .atomic,
+            .ty = .variable,
             .term = &body,
         } };
         var y = Term{ .variable = 0 };
@@ -96,10 +133,10 @@ test "tychk" {
 
         const ctx = Ctx{
             .name = "y",
-            .binding = .{ .variable = .atomic },
+            .binding = .{ .variable = .variable },
             .pred = null,
         };
         const ty = try typeOf(gpa, &app, &ctx);
-        try std.testing.expect(ty.* == .atomic);
+        try std.testing.expect(ty.* == .variable);
     }
 }

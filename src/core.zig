@@ -18,34 +18,46 @@ pub const Term = union(enum) {
 };
 
 pub const Ty = union(enum) {
-    atomic,
+    variable: u32,
     function: struct { lhs: *const Ty, rhs: *const Ty },
+    universal: struct { label: []const u8, inner: *const Ty },
 
     pub fn format(self: Ty, writer: *std.Io.Writer) !void {
         switch (self) {
-            .atomic => try writer.print("α", .{}),
+            .variable => try writer.print("α", .{}),
             .function => try writer.print(
                 "{f} -> {f}",
                 .{ self.function.lhs, self.function.rhs },
+            ),
+            .universal => try writer.print(
+                "∀{s}.{f}",
+                .{ self.universal.label, self.universal.inner },
             ),
         }
     }
 
     pub fn eql(self: Ty, other: Ty) bool {
         return switch (self) {
-            .atomic => switch (other) {
-                .atomic => true,
-                .function => false,
+            .variable => switch (other) {
+                .variable => true,
+                else => false,
             },
             .function => {
                 return switch (other) {
-                    .atomic => false,
                     .function => {
                         const lhs = self.function.lhs.*;
                         const rhs = self.function.rhs.*;
 
                         return lhs.eql(other.function.lhs.*) and rhs.eql(other.function.rhs.*);
                     },
+                    else => false,
+                };
+            },
+            .universal => {
+                return switch (other) {
+                    .universal => self.universal.inner.eql(other.universal.inner) and
+                        std.mem.eql(u8, self.universal.label, other.universal.label),
+                    else => false,
                 };
             },
         };
@@ -55,6 +67,7 @@ pub const Ty = union(enum) {
 pub const Binding = union(enum) {
     name,
     variable: Ty,
+    ty_var,
 };
 
 pub const Ctx = struct {
@@ -105,7 +118,7 @@ test "term printing" {
     var inner = Term{ .variable = 0 };
     var id = Term{ .abs = .{
         .name_hint = "x",
-        .ty = .atomic,
+        .ty = .variable,
         .term = &inner,
     } };
     std.debug.print("{f}", .{TermWCtx{ .term = &id, .ctx = null }});
