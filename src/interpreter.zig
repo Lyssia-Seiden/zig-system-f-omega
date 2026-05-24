@@ -1,5 +1,6 @@
 const std = @import("std");
 const core = @import("core.zig");
+const tychk = @import("tychk.zig");
 const Term = core.Term;
 const Ctx = core.Ctx;
 const Ty = core.Ty;
@@ -11,10 +12,18 @@ fn shift(term: *Term, delta: i64, cutoff: u32) void {
             if (term.variable >= cutoff)
                 term.variable = @intCast(@as(i32, @intCast(term.*.variable)) + delta);
         },
-        .abs => shift(term.abs.term, delta, cutoff + 1),
+        .abs => {
+            shift(term.abs.term, delta, cutoff + 1);
+            tychk.tyShift(&term.abs.ty, delta, cutoff);
+        },
         .app => {
             shift(term.app.lhs, delta, cutoff);
             shift(term.app.rhs, delta, cutoff);
+        },
+        .ty_abs => shift(term.ty_abs.term, delta, cutoff + 1),
+        .ty_app => {
+            shift(term.ty_app.term, delta, cutoff);
+            tychk.tyShift(&term.ty_app.ty, delta, cutoff);
         },
     }
 }
@@ -39,6 +48,29 @@ fn subst(term: *Term, target: u32, value: *const Term, depth: u32) void {
         .app => {
             subst(term.app.lhs, target, value, depth);
             subst(term.app.rhs, target, value, depth);
+        },
+        .ty_abs => subst(term.ty_abs.term, target, value, depth + 1),
+        .ty_app => subst(term.ty_app.term, target, value, depth),
+    }
+}
+
+/// [target -> value]term
+/// [j -> s]t
+fn tyTermSubst(term: *Term, target: u32, value: Ty, depth: u32) void {
+    switch (term.*) {
+        .variable => {},
+        .abs => {
+            tychk.tySubst(term.abs.ty, target, value);
+            tyTermSubst(term.abs.term, target, value, depth + 1);
+        },
+        .app => {
+            tyTermSubst(term.app.lhs, target, value, depth);
+            tyTermSubst(term.app.rhs, target, value, depth);
+        },
+        .ty_abs => tyTermSubst(term.ty_abs.term, target, value, depth + 1),
+        .ty_app => {
+            tychk.tySubst(term.ty_app.ty, target, value);
+            tyTermSubst(term.ty_app.term, target, value, depth + 1);
         },
     }
 }
@@ -79,6 +111,8 @@ pub fn evalStep(gpa: Allocator, term: *Term, ctx: ?*const Ctx) !bool {
                 else => false,
             };
         },
+        .ty_abs => return error.TODO,
+        .ty_app => return error.TODO,
     }
 }
 
@@ -111,7 +145,7 @@ test "eval" {
     id_body.* = Term{ .variable = 0 };
 
     const id = try gpa.create(Term);
-    id.* = Term{ .abs = .{ .name_hint = "x", .ty = .@"var", .term = id_body } };
+    id.* = Term{ .abs = .{ .name_hint = "x", .ty = .{ .variable = 1 }, .term = id_body } };
 
     const term = try gpa.create(Term);
     term.* = Term{ .app = .{ .lhs = id, .rhs = arg } };
@@ -119,7 +153,11 @@ test "eval" {
     try eval(
         gpa,
         term,
-        &Ctx{ .name = "y", .binding = .name, .pred = null },
+        &Ctx{
+            .name = "y",
+            .binding = .name,
+            .pred = &Ctx{ .name = "T", .binding = .ty_var, .pred = null },
+        },
     );
 
     try std.testing.expectEqualDeep(&Term{ .variable = 0 }, term);

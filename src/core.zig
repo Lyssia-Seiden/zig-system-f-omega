@@ -4,10 +4,12 @@ pub const Term = union(enum) {
     variable: u32,
     abs: struct { name_hint: []const u8, ty: Ty, term: *Term },
     app: struct { lhs: *Term, rhs: *Term },
+    ty_abs: struct { label: []const u8, term: *Term },
+    ty_app: struct { ty: Ty, term: *Term },
 
     pub fn isVal(self: Term) bool {
         return switch (self) {
-            .abs, .variable => true,
+            .abs, .variable, .ty_abs => true,
             else => false,
         };
     }
@@ -19,8 +21,8 @@ pub const Term = union(enum) {
 
 pub const Ty = union(enum) {
     variable: u32,
-    function: struct { lhs: *const Ty, rhs: *const Ty },
-    universal: struct { label: []const u8, inner: *const Ty },
+    function: struct { lhs: *Ty, rhs: *Ty },
+    universal: struct { label: []const u8, inner: *Ty },
 
     pub fn format(self: Ty, writer: *std.Io.Writer) !void {
         switch (self) {
@@ -106,9 +108,17 @@ pub const TermWCtx = struct {
                     } },
                 },
             ),
-            .app => try writer.print("{f} {f}", .{
+            .app => try writer.print("({f} {f})", .{
                 TermWCtx{ .term = self.term.app.lhs, .ctx = self.ctx },
                 TermWCtx{ .term = self.term.app.rhs, .ctx = self.ctx },
+            }),
+            .ty_abs => try writer.print("Λ{s}.{f}", .{
+                self.term.ty_abs.label,
+                TermWCtx{ .term = self.term.ty_abs.term, .ctx = self.ctx },
+            }),
+            .ty_app => try writer.print("({f} [{f}])", .{
+                TermWCtx{ .term = self.term.ty_app.term, .ctx = self.ctx },
+                self.term.ty_app.ty,
             }),
         }
     }
@@ -118,7 +128,7 @@ test "term printing" {
     var inner = Term{ .variable = 0 };
     var id = Term{ .abs = .{
         .name_hint = "x",
-        .ty = .variable,
+        .ty = .{ .variable = 1 },
         .term = &inner,
     } };
     std.debug.print("{f}", .{TermWCtx{ .term = &id, .ctx = null }});
