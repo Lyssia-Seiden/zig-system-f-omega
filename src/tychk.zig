@@ -94,6 +94,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                     const lhs_from = lhs_ty.function.lhs;
                     const lhs_to = lhs_ty.function.rhs;
 
+                    // TODO test for equivalence, not just equality
                     if (rhs_ty.eql(lhs_from.*)) {
                         return lhs_to;
                     }
