@@ -1,94 +1,56 @@
 const std = @import("std");
-pub const Label: type = []const u8;
-pub const Ty: type = union(enum) {
-    variable: Label,
-    function: struct {
-        from: *const Ty,
-        to: *const Ty,
-    },
-    universal: struct {
-        label: Label,
-        ty: *const Ty,
-        kind: Kind,
-    },
-    op_abs: struct {
-        label: Label,
-        kind: Kind,
-        ty: *const Ty,
-    },
-    op_app: struct {
-        lhs: *const Ty,
-        rhs: *const Ty,
-    },
 
-    pub fn replace(self: Ty, label: Label, ty: Ty) Ty {
-        switch (self) {
-            .variable => |l| {
-                if (std.mem.eql(u8, l, label)) return ty else return self;
-            },
-            else => return self,
-        }
-    }
+const Term = union(enum) {
+    variable: u32,
+    abs: struct { name_hint: []const u8, term: *const Term },
+    app: struct { lhs: *const Term, rhs: *const Term },
+};
 
-    pub fn format(self: Ty, writer: *std.Io.Writer) !void {
-        switch (self) {
-            .variable => try writer.print("{s}", .{self.variable}),
-            .function => try writer.print("{f} -> {f}", .{ self.function.from, self.function.to }),
-            .universal => try writer.print("∀{s}.{f}", .{ self.universal.label, self.universal.ty }),
-            .op_abs => try writer.print("λ{s}::{f}.{f}", .{
-                self.op_abs.label,
-                self.op_abs.kind,
-                self.op_abs.ty,
-            }),
-            .op_app => try writer.print("({f} {f})", .{ self.op_app.lhs, self.op_app.rhs }),
-        }
+const Ty = union(enum) {};
+
+const Ctx = struct {
+    name: []const u8,
+    binding: union(enum) {
+        name,
+    },
+    pred: ?*const Ctx,
+
+    pub fn head(self: Ctx) Ctx {
+        return if (self.pred) |next| head(next.*) else self;
     }
 };
-pub const Kind = union(enum) {
-    proper,
-    operator: struct { lhs: *const Kind, rhs: *const Kind },
 
-    pub fn format(self: Kind, writer: *std.Io.Writer) !void {
-        switch (self) {
-            .proper => try writer.printAsciiChar('*', .{}),
-            .operator => try writer.print("({f} => {f})", .{
-                self.operator.lhs,
-                self.operator.rhs,
+const TermWCtx = struct {
+    term: *const Term,
+    ctx: ?*const Ctx,
+
+    pub fn format(self: TermWCtx, writer: *std.Io.Writer) !void {
+        switch (self.term.*) {
+            // TODO handle de brujin niceties
+            .variable => try writer.print("{s}", .{self.ctx.?.name}),
+            .abs => try writer.print(
+                "λ{s}.{f}",
+                .{
+                    self.term.abs.name_hint,
+                    TermWCtx{ .term = self.term.abs.term, .ctx = &Ctx{
+                        .name = self.term.abs.name_hint,
+                        .binding = .name,
+                        .pred = self.ctx,
+                    } },
+                },
+            ),
+            .app => try writer.print("{f} {f}", .{
+                TermWCtx{ .term = self.term.app.lhs, .ctx = self.ctx },
+                TermWCtx{ .term = self.term.app.rhs, .ctx = self.ctx },
             }),
         }
     }
 };
-pub const Term = union(enum) {
-    variable: Label,
-    abs: struct {
-        name: Label,
-        ty: Ty,
-        term: *const Term,
-    },
-    app: struct {
-        lhs: *const Term,
-        rhs: *const Term,
-    },
-    ty_abs: struct {
-        label: Label,
-        kind: Kind,
-        term: *const Term,
-    },
-    ty_app: struct {
-        term: *const Term,
-        ty: Ty,
-    },
 
-    pub fn format(
-        self: Term,
-        writer: *std.Io.Writer,
-    ) !void {
-        switch (self) {
-            .variable => try writer.print("{s}", .{self.variable}),
-            .abs => |t| try writer.print("λ{s}:{f}.({f})", .{ t.name, t.ty, t.term }),
-            .app => |t| try writer.print("({f} {f})", .{ t.lhs, t.rhs }),
-            .ty_abs => |t| try writer.print("Λ{s}::{f}.({f})", .{ t.label, t.kind, t.term }),
-            .ty_app => |t| try writer.print("{f} [{f}]", .{ t.term, t.ty }),
-        }
-    }
-};
+test "term printing" {
+    const id = Term{ .abs = .{
+        .name_hint = "x",
+        .term = &Term{ .variable = 0 },
+    } };
+    std.debug.print("{f}", .{TermWCtx{.term = &id, .ctx = null}});
+}
