@@ -237,8 +237,8 @@ fn parseTy(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !struct
             while (walking_ctx) |c| {
                 if (std.mem.eql(u8, tokens[0].ident, c.name) and c.binding == .ty_var) {
                     // in the club totally de brujinizing it
-                    const alloc = try gpa.create(core.Term);
-                    alloc.* = core.Term{ .variable = i };
+                    const alloc = try gpa.create(core.Ty);
+                    alloc.* = core.Ty{ .variable = i };
                     return .{ alloc, 1 };
                 }
                 walking_ctx = c.pred;
@@ -255,25 +255,26 @@ fn parseTy(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !struct
                 tokens[3..],
                 ctx,
             );
+            defer gpa.destroy(kind);
             if (tokens[3 + dot_offset] != .dot) return error.MalformedLambda;
             const inner_ctx = core.Ctx{
                 .name = ident,
-                .binding = .{ .ty_var = kind },
+                .binding = .{ .ty_var = kind.* },
                 .pred = ctx,
             };
             const inner, const end_offset = try parseTy(
                 gpa,
                 tokens[3 + dot_offset + 1 ..],
-                inner_ctx,
+                &inner_ctx,
             );
 
             const alloc = try gpa.create(core.Ty);
             alloc.* = .{ .abs = .{
                 .name_hint = ident,
-                .kind = kind,
+                .kind = kind.*,
                 .ty = inner,
             } };
-            return .{ alloc, 3 + dot_offset + end_offset };
+            return .{ alloc, 4 + dot_offset + end_offset };
         },
         .forall => {
             if (tokens[1] != .ident) return error.MalformedLamba;
@@ -284,25 +285,26 @@ fn parseTy(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !struct
                 tokens[3..],
                 ctx,
             );
+            defer gpa.destroy(kind);
             if (tokens[3 + dot_offset] != .dot) return error.MalformedLambda;
             const inner_ctx = core.Ctx{
                 .name = ident,
-                .binding = .{ .ty_var = kind },
+                .binding = .{ .ty_var = kind.* },
                 .pred = ctx,
             };
             const inner, const end_offset = try parseTy(
                 gpa,
                 tokens[3 + dot_offset + 1 ..],
-                inner_ctx,
+                &inner_ctx,
             );
 
             const alloc = try gpa.create(core.Ty);
             alloc.* = .{ .universal = .{
                 .label = ident,
-                .kind = kind,
+                .kind = kind.*,
                 .inner = inner,
             } };
-            return .{ alloc, 3 + dot_offset + end_offset };
+            return .{ alloc, 4 + dot_offset + end_offset };
         },
         .open_paren => {
             return error.TODO;
@@ -330,8 +332,8 @@ fn parseKind(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !stru
                 closing_idx += 1;
             }
 
-            const lhs = try parseKind(gpa, tokens[1..arrow_idx], ctx);
-            const rhs = try parseKind(gpa, tokens[arrow_idx..closing_idx], ctx);
+            const lhs, _ = try parseKind(gpa, tokens[1..arrow_idx], ctx);
+            const rhs, _ = try parseKind(gpa, tokens[arrow_idx..closing_idx], ctx);
 
             const alloc = try gpa.create(core.Kind);
             alloc.* = .{ .operator = .{
