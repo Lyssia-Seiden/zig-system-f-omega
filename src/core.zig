@@ -18,6 +18,16 @@ pub const Term = union(enum) {
     pub fn print(self: *Term, ctx: ?*const Ctx) void {
         std.debug.print("{f}\n", .{TermWCtx{ .term = self, .ctx = ctx }});
     }
+
+    pub fn format(
+        self: *const Term,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        try writer.print(
+            "{f}",
+            .{TermWCtx{ .term = self, .ctx = null }},
+        );
+    }
 };
 
 pub const Ty = union(enum) {
@@ -100,6 +110,12 @@ pub const Ctx = struct {
         if (self.pred) |p| return p.get(i - 1);
         return null;
     }
+
+    pub fn getName(self: Ctx, i: u32) ?[]const u8 {
+        if (i == 0) return self.name;
+        if (self.pred) |p| return p.getName(i - 1);
+        return null;
+    }
 };
 
 pub const TermWCtx = struct {
@@ -109,27 +125,46 @@ pub const TermWCtx = struct {
     pub fn format(self: TermWCtx, writer: *std.Io.Writer) !void {
         switch (self.term.*) {
             // TODO handle de brujin niceties
-            .variable => try writer.print("{s}/{}", .{ self.ctx.?.name, self.term.variable }),
-            .abs => try writer.print(
-                "λ{s}:{f}.{f}",
+            .variable => try writer.print(
+                "{s}/{}",
                 .{
-                    self.term.abs.name_hint,
-                    self.term.abs.ty,
-                    TermWCtx{ .term = self.term.abs.term, .ctx = &Ctx{
-                        .name = self.term.abs.name_hint,
-                        .binding = .name,
-                        .pred = self.ctx,
-                    } },
+                    if (self.ctx) |c| c.getName(self.term.variable) orelse "unknown" else "unknown",
+                    self.term.variable,
                 },
             ),
+            .abs => {
+                const inner_ctx = Ctx{
+                    .name = self.term.abs.name_hint,
+                    .binding = .{ .variable = self.term.abs.ty },
+                    .pred = self.ctx,
+                };
+                try writer.print(
+                    "λ{s}:{f}.{f}",
+                    .{
+                        self.term.abs.name_hint,
+                        self.term.abs.ty,
+                        TermWCtx{ .term = self.term.abs.term, .ctx = &inner_ctx },
+                    },
+                );
+            },
             .app => try writer.print("({f} {f})", .{
                 TermWCtx{ .term = self.term.app.lhs, .ctx = self.ctx },
                 TermWCtx{ .term = self.term.app.rhs, .ctx = self.ctx },
             }),
-            .ty_abs => try writer.print("Λ{s}.{f}", .{
-                self.term.ty_abs.label,
-                TermWCtx{ .term = self.term.ty_abs.term, .ctx = self.ctx },
-            }),
+            .ty_abs => {
+                const inner_ctx = Ctx{
+                    .name = self.term.ty_abs.label,
+                    .binding = .{ .ty_var = self.term.ty_abs.kind },
+                    .pred = self.ctx,
+                };
+                try writer.print("Λ{s}.{f}", .{
+                    self.term.ty_abs.label,
+                    TermWCtx{
+                        .term = self.term.ty_abs.term,
+                        .ctx = &inner_ctx,
+                    },
+                });
+            },
             .ty_app => try writer.print("({f} [{f}])", .{
                 TermWCtx{ .term = self.term.ty_app.term, .ctx = self.ctx },
                 self.term.ty_app.ty,

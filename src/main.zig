@@ -22,7 +22,10 @@ pub fn main(init: std.process.Init) !void {
     var stdout = std.Io.File.stdout().writer(init.io, buf);
 
     const ir = try parser.parse(gpa, source);
-    try stdout.interface.print("Program Parses!\n", .{});
+    try stdout.interface.print(
+        "Program Parses!\nTerm: {f}\n",
+        .{ir},
+    );
     try stdout.flush();
     const ty: ?*core.Ty = tychk.typeOf(gpa, ir, null) catch null;
     if (ty) |_| {
@@ -32,7 +35,7 @@ pub fn main(init: std.process.Init) !void {
     try interpreter.eval(gpa, ir, null);
     try stdout.interface.print(
         "{f}\n",
-        .{core.TermWCtx{ .term = ir, .ctx = null }},
+        .{ir},
     );
     try stdout.flush();
 }
