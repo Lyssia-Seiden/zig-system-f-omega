@@ -249,10 +249,79 @@ fn parseTokens(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !st
             return .{ alloc, 3 + ty_offset + 1 + inner_offset };
         },
         .big_lambda => {
-            return error.TODO;
+            if (tokens[1] != .ident) return error.MalformedBigLambda;
+            const ident = tokens[1].ident;
+            if (tokens[2] != .double_colon) return error.MalformedBigLambda;
+            const kind, const kind_offset = try parseKind(
+                gpa,
+                tokens[3..],
+                ctx,
+            );
+            defer gpa.destroy(kind);
+
+            if (tokens[3 + kind_offset] != .dot) return error.MalformedBigLambda;
+            const inner_ctx = core.Ctx{
+                .name = ident,
+                .binding = .{ .ty_var = kind.* },
+                .pred = ctx,
+            };
+            const inner, const inner_offset = try parseTokens(
+                gpa,
+                tokens[3 + kind_offset + 1 ..],
+                &inner_ctx,
+            );
+
+            const alloc = try gpa.create(core.Term);
+            alloc.* = .{ .ty_abs = .{
+                .label = ident,
+                .kind = kind.*,
+                .term = inner,
+            } };
+            return .{ alloc, 3 + kind_offset + 1 + inner_offset };
         },
         .open_paren => {
-            return error.TODO;
+            var closing_idx: usize = 1;
+            var maybe_space_idx: ?usize = null;
+            var paren_count: i32 = 0;
+            while (!(paren_count == 0 and tokens[closing_idx] == .close_paren)) {
+                if (tokens[closing_idx] == .open_paren) paren_count += 1;
+                if (tokens[closing_idx] == .close_paren) paren_count -= 1;
+                if (tokens[closing_idx] == .space and paren_count == 0)
+                    maybe_space_idx = closing_idx;
+                closing_idx += 1;
+                if (closing_idx == tokens.len) return error.NoClosingParen;
+            }
+            if (maybe_space_idx) |space_idx| {
+                const lhs, _ = try parseTokens(
+                    gpa,
+                    tokens[1..space_idx],
+                    ctx,
+                );
+                if (tokens[space_idx + 1] == .open_bracket) {
+                    if (tokens[closing_idx - 1] != .close_bracket) return error.MalformedTyApp;
+                    const rhs, _ = try parseTy(
+                        gpa,
+                        tokens[space_idx + 2 .. closing_idx - 1],
+                        ctx,
+                    );
+                    defer gpa.destroy(rhs);
+
+                    const alloc = try gpa.create(core.Term);
+                    alloc.* = .{ .ty_app = .{ .term = lhs, .ty = rhs.* } };
+                    return .{ alloc, closing_idx + 1 };
+                } else {
+                    const rhs, _ = try parseTokens(
+                        gpa,
+                        tokens[space_idx + 1 .. closing_idx],
+                        ctx,
+                    );
+
+                    const alloc = try gpa.create(core.Term);
+                    alloc.* = .{ .app = .{ .lhs = lhs, .rhs = rhs } };
+                    return .{ alloc, closing_idx + 1 };
+                }
+            }
+            return error.InvalidParens;
         },
         else => return error.InvalidToken,
     }
@@ -767,4 +836,80 @@ test "parseTokens: term abstraction body uses extended context" {
     const term, _ = try parseTokens(gpa, tokens, &ctx);
     try testing.expect(term.* == .abs);
     try testing.expectEqual(@as(u32, 0), term.abs.term.variable);
+}
+
+test "parseTokens: term application (f x)" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const outer = core.Ctx{
+        .name = "x",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = null,
+    };
+    const ctx = core.Ctx{
+        .name = "f",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = &outer,
+    };
+    const tokens = try tokenize("(f x)");
+    const term, const consumed = try parseTokens(gpa, tokens, &ctx);
+    try testing.expect(term.* == .app);
+    try testing.expect(term.app.lhs.* == .variable);
+    try testing.expectEqual(@as(u32, 0), term.app.lhs.variable);
+    try testing.expect(term.app.rhs.* == .variable);
+    try testing.expectEqual(@as(u32, 1), term.app.rhs.variable);
+    try testing.expectEqual(tokens.len, consumed);
+}
+
+test "parseTokens: nested term application ((f x) y)" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const c2 = core.Ctx{
+        .name = "y",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = null,
+    };
+    const c1 = core.Ctx{
+        .name = "x",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = &c2,
+    };
+    const ctx = core.Ctx{
+        .name = "f",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = &c1,
+    };
+    const tokens = try tokenize("((f x) y)");
+    const term, _ = try parseTokens(gpa, tokens, &ctx);
+    try testing.expect(term.* == .app);
+    try testing.expect(term.app.lhs.* == .app);
+}
+
+test "parseTokens: term-level type application (f [α])" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const outer = core.Ctx{
+        .name = "α",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    };
+    const ctx = core.Ctx{
+        .name = "f",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = &outer,
+    };
+    const tokens = try tokenize("(f [α])");
+    const term, const consumed = try parseTokens(gpa, tokens, &ctx);
+    try testing.expect(term.* == .ty_app);
+    try testing.expect(term.ty_app.term.* == .variable);
+    try testing.expectEqual(@as(u32, 0), term.ty_app.term.variable);
+    try testing.expect(term.ty_app.ty == .variable);
+    try testing.expectEqual(@as(u32, 1), term.ty_app.ty.variable);
+    try testing.expectEqual(tokens.len, consumed);
 }
