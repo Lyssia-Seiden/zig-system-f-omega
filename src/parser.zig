@@ -37,8 +37,8 @@ const literals = .{
     .{ "]", .close_bracket },
     .{ " ", .space },
 };
-fn tokenize(str: []const u8) ![]const Token {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+fn tokenize(gpa: Allocator, str: []const u8) ![]const Token {
+    var arena = std.heap.ArenaAllocator.init(gpa);
     const aa = arena.allocator();
 
     var list: std.ArrayList(Token) = try .initCapacity(aa, 16);
@@ -77,7 +77,7 @@ fn tokenize(str: []const u8) ![]const Token {
 const testing = std.testing;
 
 fn expectTokens(input: []const u8, expected: []const Token) !void {
-    const actual = try tokenize(input);
+    const actual = try tokenize(std.testing.allocator, input);
     try testing.expectEqualDeep(expected, actual);
 }
 
@@ -198,6 +198,11 @@ test "tokenize: identifier butted against literal" {
         .arrow,
         .{ .ident = "bar" },
     });
+}
+
+pub fn parse(gpa: Allocator, str: []const u8) !*core.Term {
+    const tokens = try tokenize(gpa, str);
+    return (try parseTokens(gpa, tokens, null))[0];
 }
 
 fn parseTokens(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !struct { *core.Term, usize } {
@@ -485,7 +490,7 @@ test "parseKind: proper type" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize("*");
+    const tokens = try tokenize(std.testing.allocator, "*");
     const kind, const consumed = try parseKind(gpa, tokens, null);
     try testing.expect(kind.* == .proper);
     try testing.expectEqual(@as(usize, 1), consumed);
@@ -497,7 +502,7 @@ test "parseKind: only consumes a single token" {
     const gpa = arena.allocator();
 
     // trailing tokens should be left alone for the caller
-    const tokens = try tokenize("*.");
+    const tokens = try tokenize(std.testing.allocator, "*.");
     const kind, const consumed = try parseKind(gpa, tokens, null);
     try testing.expect(kind.* == .proper);
     try testing.expectEqual(@as(usize, 1), consumed);
@@ -508,7 +513,7 @@ test "parseKind error: lone ident is not a kind" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize("α");
+    const tokens = try tokenize(std.testing.allocator, "α");
     try testing.expectError(error.MalformedKind, parseKind(gpa, tokens, null));
 }
 
@@ -517,7 +522,7 @@ test "parseKind error: dot is not a kind" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize(".");
+    const tokens = try tokenize(std.testing.allocator, ".");
     try testing.expectError(error.MalformedKind, parseKind(gpa, tokens, null));
 }
 
@@ -526,7 +531,7 @@ test "parseTy error: leading dot is malformed" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize(".");
+    const tokens = try tokenize(std.testing.allocator, ".");
     try testing.expectError(error.MalformedType, parseTy(gpa, tokens, null));
 }
 
@@ -535,7 +540,7 @@ test "parseTy error: leading arrow is malformed" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize("->");
+    const tokens = try tokenize(std.testing.allocator, "->");
     try testing.expectError(error.MalformedType, parseTy(gpa, tokens, null));
 }
 
@@ -549,7 +554,7 @@ test "parseTy: bound ident resolves to de Bruijn variable" {
         .binding = .{ .ty_var = .proper },
         .pred = null,
     };
-    const tokens = try tokenize("α");
+    const tokens = try tokenize(std.testing.allocator, "α");
     const ty, const consumed = try parseTy(gpa, tokens, &ctx);
     try testing.expect(ty.* == .variable);
     try testing.expectEqual(@as(u32, 0), ty.variable);
@@ -573,7 +578,7 @@ test "parseTy: ident skips non-ty_var bindings" {
         .binding = .{ .variable = .{ .variable = 0 } },
         .pred = &outer,
     };
-    const tokens = try tokenize("β");
+    const tokens = try tokenize(std.testing.allocator, "β");
     const ty, _ = try parseTy(gpa, tokens, &inner);
     try testing.expect(ty.* == .variable);
     try testing.expectEqual(@as(u32, 1), ty.variable);
@@ -584,7 +589,7 @@ test "parseTy error: unbound ident" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize("α");
+    const tokens = try tokenize(std.testing.allocator, "α");
     try testing.expectError(error.UnknownVariable, parseTy(gpa, tokens, null));
 }
 
@@ -593,7 +598,7 @@ test "parseTy: type-level identity λα::*.α" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize("λα::*.α");
+    const tokens = try tokenize(std.testing.allocator, "λα::*.α");
     const ty, const consumed = try parseTy(gpa, tokens, null);
     try testing.expect(ty.* == .abs);
     try testing.expectEqualStrings("α", ty.abs.name_hint);
@@ -608,7 +613,7 @@ test "parseTy: universal ∀α::*.α" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize("∀α::*.α");
+    const tokens = try tokenize(std.testing.allocator, "∀α::*.α");
     const ty, const consumed = try parseTy(gpa, tokens, null);
     try testing.expect(ty.* == .universal);
     try testing.expectEqualStrings("α", ty.universal.label);
@@ -633,7 +638,7 @@ test "parseTy: function type (α->β)" {
         .binding = .{ .ty_var = .proper },
         .pred = &outer,
     };
-    const tokens = try tokenize("(α->β)");
+    const tokens = try tokenize(std.testing.allocator, "(α->β)");
     const ty, const consumed = try parseTy(gpa, tokens, &ctx);
     try testing.expect(ty.* == .function);
     try testing.expect(ty.function.lhs.* == .variable);
@@ -663,7 +668,7 @@ test "parseTy: nested function type (α->(β->γ))" {
         .binding = .{ .ty_var = .proper },
         .pred = &c1,
     };
-    const tokens = try tokenize("(α->(β->γ))");
+    const tokens = try tokenize(std.testing.allocator, "(α->(β->γ))");
     const ty, _ = try parseTy(gpa, tokens, &ctx);
     try testing.expect(ty.* == .function);
     try testing.expect(ty.function.rhs.* == .function);
@@ -688,7 +693,7 @@ test "parseTy: type application (f α)" {
         .binding = .{ .ty_var = k_op },
         .pred = &outer,
     };
-    const tokens = try tokenize("(f α)");
+    const tokens = try tokenize(std.testing.allocator, "(f α)");
     const ty, const consumed = try parseTy(gpa, tokens, &ctx);
     try testing.expect(ty.* == .app);
     try testing.expect(ty.app.lhs.* == .variable);
@@ -723,7 +728,7 @@ test "parseTy: nested type application ((f α) β)" {
         .binding = .{ .ty_var = k_f },
         .pred = &c1,
     };
-    const tokens = try tokenize("((f α) β)");
+    const tokens = try tokenize(std.testing.allocator, "((f α) β)");
     const ty, _ = try parseTy(gpa, tokens, &ctx);
     try testing.expect(ty.* == .app);
     try testing.expect(ty.app.lhs.* == .app);
@@ -741,7 +746,7 @@ test "parseTy: lambda body uses extended context" {
         .binding = .{ .ty_var = .proper },
         .pred = null,
     };
-    const tokens = try tokenize("λα::*.α");
+    const tokens = try tokenize(std.testing.allocator, "λα::*.α");
     const ty, _ = try parseTy(gpa, tokens, &ctx);
     try testing.expect(ty.* == .abs);
     try testing.expectEqual(@as(u32, 0), ty.abs.ty.variable);
@@ -757,7 +762,7 @@ test "parseTokens: bound ident resolves to de Bruijn variable" {
         .binding = .{ .variable = .{ .variable = 0 } },
         .pred = null,
     };
-    const tokens = try tokenize("x");
+    const tokens = try tokenize(std.testing.allocator, "x");
     const term, const consumed = try parseTokens(gpa, tokens, &ctx);
     try testing.expect(term.* == .variable);
     try testing.expectEqual(@as(u32, 0), term.variable);
@@ -780,7 +785,7 @@ test "parseTokens: ident skips non-variable bindings" {
         .binding = .{ .ty_var = .proper },
         .pred = &outer,
     };
-    const tokens = try tokenize("x");
+    const tokens = try tokenize(std.testing.allocator, "x");
     const term, _ = try parseTokens(gpa, tokens, &inner);
     try testing.expect(term.* == .variable);
     try testing.expectEqual(@as(u32, 1), term.variable);
@@ -791,7 +796,7 @@ test "parseTokens error: unbound ident" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const tokens = try tokenize("x");
+    const tokens = try tokenize(std.testing.allocator, "x");
     try testing.expectError(error.UnknownVariable, parseTokens(gpa, tokens, null));
 }
 
@@ -805,7 +810,7 @@ test "parseTokens: term abstraction λx:α.x" {
         .binding = .{ .ty_var = .proper },
         .pred = null,
     };
-    const tokens = try tokenize("λx:α.x");
+    const tokens = try tokenize(std.testing.allocator, "λx:α.x");
     const term, const consumed = try parseTokens(gpa, tokens, &ctx);
     try testing.expect(term.* == .abs);
     try testing.expectEqualStrings("x", term.abs.name_hint);
@@ -832,7 +837,7 @@ test "parseTokens: term abstraction body uses extended context" {
         .binding = .{ .variable = .{ .variable = 0 } },
         .pred = &outer,
     };
-    const tokens = try tokenize("λx:α.x");
+    const tokens = try tokenize(std.testing.allocator, "λx:α.x");
     const term, _ = try parseTokens(gpa, tokens, &ctx);
     try testing.expect(term.* == .abs);
     try testing.expectEqual(@as(u32, 0), term.abs.term.variable);
@@ -853,7 +858,7 @@ test "parseTokens: term application (f x)" {
         .binding = .{ .variable = .{ .variable = 0 } },
         .pred = &outer,
     };
-    const tokens = try tokenize("(f x)");
+    const tokens = try tokenize(std.testing.allocator, "(f x)");
     const term, const consumed = try parseTokens(gpa, tokens, &ctx);
     try testing.expect(term.* == .app);
     try testing.expect(term.app.lhs.* == .variable);
@@ -883,7 +888,7 @@ test "parseTokens: nested term application ((f x) y)" {
         .binding = .{ .variable = .{ .variable = 0 } },
         .pred = &c1,
     };
-    const tokens = try tokenize("((f x) y)");
+    const tokens = try tokenize(std.testing.allocator, "((f x) y)");
     const term, _ = try parseTokens(gpa, tokens, &ctx);
     try testing.expect(term.* == .app);
     try testing.expect(term.app.lhs.* == .app);
@@ -904,7 +909,7 @@ test "parseTokens: term-level type application (f [α])" {
         .binding = .{ .variable = .{ .variable = 0 } },
         .pred = &outer,
     };
-    const tokens = try tokenize("(f [α])");
+    const tokens = try tokenize(std.testing.allocator, "(f [α])");
     const term, const consumed = try parseTokens(gpa, tokens, &ctx);
     try testing.expect(term.* == .ty_app);
     try testing.expect(term.ty_app.term.* == .variable);
