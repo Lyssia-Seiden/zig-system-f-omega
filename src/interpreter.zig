@@ -131,11 +131,9 @@ pub fn evalStep(gpa: Allocator, term: *Term, ctx: ?*const Ctx) !bool {
                         gpa.destroy(lhs.abs.term);
                         return true;
                     } else if (lhs.isVal()) {
-                        _ = try evalStep(gpa, rhs, ctx);
-                        return true;
+                        return try evalStep(gpa, rhs, ctx);
                     } else {
-                        _ = try evalStep(gpa, lhs, ctx);
-                        return true;
+                        return try evalStep(gpa, lhs, ctx);
                     }
                 },
                 else => false,
@@ -150,11 +148,12 @@ pub fn evalStep(gpa: Allocator, term: *Term, ctx: ?*const Ctx) !bool {
                     tychk.tyShift(&ty, 1, 0);
                     tyTermSubst(inner_term, 0, ty, 0);
                     tychk.tyShift(&ty, -1, 0);
+                    term.* = inner_term.ty_abs.term.*;
+                    gpa.destroy(inner_term);
                     return true;
                 },
                 else => {
-                    _ = try evalStep(gpa, term.ty_app.term, ctx);
-                    return true;
+                    return try evalStep(gpa, term.ty_app.term, ctx);
                 },
             }
         },

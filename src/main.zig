@@ -18,14 +18,18 @@ pub fn main(init: std.process.Init) !void {
         std.Io.Limit.unlimited,
     );
 
-    const ir = try parser.parse(gpa, source);
-    const ty: ?*core.Ty = tychk.typeOf(gpa, ir, null) catch null;
-    if (ty) |_| {
-        try std.Io.File.stdout().writeStreamingAll(init.io, "Program Type Checks!\n");
-    }
-    try interpreter.eval(gpa, ir, null);
     const buf = try gpa.alloc(u8, 64);
     var stdout = std.Io.File.stdout().writer(init.io, buf);
+
+    const ir = try parser.parse(gpa, source);
+    try stdout.interface.print("Program Parses!\n", .{});
+    try stdout.flush();
+    const ty: ?*core.Ty = tychk.typeOf(gpa, ir, null) catch null;
+    if (ty) |_| {
+        try stdout.interface.print("Program Type Checks!!!\n", .{});
+        try stdout.flush();
+    }
+    try interpreter.eval(gpa, ir, null);
     try stdout.interface.print(
         "{f}\n",
         .{core.TermWCtx{ .term = ir, .ctx = null }},
