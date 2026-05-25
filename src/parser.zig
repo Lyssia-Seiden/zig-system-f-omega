@@ -17,6 +17,7 @@ const Token = union(enum) {
     close_paren,
     open_bracket,
     close_bracket,
+    space,
 };
 
 const literals = .{
@@ -34,6 +35,7 @@ const literals = .{
     .{ ")", .close_paren },
     .{ "[", .open_bracket },
     .{ "]", .close_bracket },
+    .{ " ", .space },
 };
 fn tokenize(str: []const u8) ![]const Token {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -307,7 +309,39 @@ fn parseTy(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !struct
             return .{ alloc, 4 + dot_offset + end_offset };
         },
         .open_paren => {
-            return error.TODO;
+            var closing_idx: usize = 1;
+            var maybe_space_idx: ?usize = null;
+            var maybe_arrow_idx: ?usize = null;
+            var paren_count: i32 = 0;
+            while (!(paren_count == 0 and tokens[closing_idx] == .close_paren)) {
+                if (tokens[closing_idx] == .open_paren) paren_count += 1;
+                if (tokens[closing_idx] == .close_paren) paren_count -= 1;
+                if (tokens[closing_idx] == .space and paren_count == 0)
+                    maybe_space_idx = closing_idx;
+                if (tokens[closing_idx] == .arrow and paren_count == 0)
+                    maybe_arrow_idx = closing_idx;
+                closing_idx += 1;
+                if (closing_idx == tokens.len) return error.NoClosingParen;
+            }
+            if (maybe_arrow_idx) |arrow_idx| {
+                // function type
+                const lhs, _ = try parseTy(gpa, tokens[1..arrow_idx], ctx);
+                const rhs, _ = try parseTy(gpa, tokens[arrow_idx + 1 .. closing_idx], ctx);
+
+                const alloc = try gpa.create(core.Ty);
+                alloc.* = .{ .function = .{ .lhs = lhs, .rhs = rhs } };
+                return .{ alloc, closing_idx + 1 };
+            }
+            if (maybe_space_idx) |space_idx| {
+                // application type
+                const lhs, _ = try parseTy(gpa, tokens[1..space_idx], ctx);
+                const rhs, _ = try parseTy(gpa, tokens[space_idx + 1 .. closing_idx], ctx);
+
+                const alloc = try gpa.create(core.Ty);
+                alloc.* = .{ .app = .{ .lhs = lhs, .rhs = rhs } };
+                return .{ alloc, closing_idx + 1 };
+            }
+            return error.InvalidParens;
         },
         else => return error.MalformedType,
     }
@@ -389,15 +423,6 @@ test "parseKind error: dot is not a kind" {
 
     const tokens = try tokenize(".");
     try testing.expectError(error.MalformedKind, parseKind(gpa, tokens, null));
-}
-
-test "parseTy error: paren branch is TODO" {
-    var arena = arenaAlloc();
-    defer arena.deinit();
-    const gpa = arena.allocator();
-
-    const tokens = try tokenize("(α)");
-    try testing.expectError(error.TODO, parseTy(gpa, tokens, null));
 }
 
 test "parseTy error: leading dot is malformed" {
@@ -495,6 +520,117 @@ test "parseTy: universal ∀α::*.α" {
     try testing.expect(ty.universal.inner.* == .variable);
     try testing.expectEqual(@as(u32, 0), ty.universal.inner.variable);
     try testing.expectEqual(tokens.len, consumed);
+}
+
+test "parseTy: function type (α->β)" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const outer = core.Ctx{
+        .name = "β",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    };
+    const ctx = core.Ctx{
+        .name = "α",
+        .binding = .{ .ty_var = .proper },
+        .pred = &outer,
+    };
+    const tokens = try tokenize("(α->β)");
+    const ty, const consumed = try parseTy(gpa, tokens, &ctx);
+    try testing.expect(ty.* == .function);
+    try testing.expect(ty.function.lhs.* == .variable);
+    try testing.expectEqual(@as(u32, 0), ty.function.lhs.variable);
+    try testing.expect(ty.function.rhs.* == .variable);
+    try testing.expectEqual(@as(u32, 1), ty.function.rhs.variable);
+    try testing.expectEqual(tokens.len, consumed);
+}
+
+test "parseTy: nested function type (α->(β->γ))" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const c2 = core.Ctx{
+        .name = "γ",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    };
+    const c1 = core.Ctx{
+        .name = "β",
+        .binding = .{ .ty_var = .proper },
+        .pred = &c2,
+    };
+    const ctx = core.Ctx{
+        .name = "α",
+        .binding = .{ .ty_var = .proper },
+        .pred = &c1,
+    };
+    const tokens = try tokenize("(α->(β->γ))");
+    const ty, _ = try parseTy(gpa, tokens, &ctx);
+    try testing.expect(ty.* == .function);
+    try testing.expect(ty.function.rhs.* == .function);
+}
+
+test "parseTy: type application (f α)" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const k_from: core.Kind = .proper;
+    const k_to: core.Kind = .proper;
+    const k_op = core.Kind{ .operator = .{ .from = &k_from, .to = &k_to } };
+
+    const outer = core.Ctx{
+        .name = "α",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    };
+    const ctx = core.Ctx{
+        .name = "f",
+        .binding = .{ .ty_var = k_op },
+        .pred = &outer,
+    };
+    const tokens = try tokenize("(f α)");
+    const ty, const consumed = try parseTy(gpa, tokens, &ctx);
+    try testing.expect(ty.* == .app);
+    try testing.expect(ty.app.lhs.* == .variable);
+    try testing.expectEqual(@as(u32, 0), ty.app.lhs.variable);
+    try testing.expect(ty.app.rhs.* == .variable);
+    try testing.expectEqual(@as(u32, 1), ty.app.rhs.variable);
+    try testing.expectEqual(tokens.len, consumed);
+}
+
+test "parseTy: nested type application ((f α) β)" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const k_from: core.Kind = .proper;
+    const k_to: core.Kind = .proper;
+    const k_inner = core.Kind{ .operator = .{ .from = &k_from, .to = &k_to } };
+    const k_f = core.Kind{ .operator = .{ .from = &k_from, .to = &k_inner } };
+
+    const c2 = core.Ctx{
+        .name = "β",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    };
+    const c1 = core.Ctx{
+        .name = "α",
+        .binding = .{ .ty_var = .proper },
+        .pred = &c2,
+    };
+    const ctx = core.Ctx{
+        .name = "f",
+        .binding = .{ .ty_var = k_f },
+        .pred = &c1,
+    };
+    const tokens = try tokenize("((f α) β)");
+    const ty, _ = try parseTy(gpa, tokens, &ctx);
+    try testing.expect(ty.* == .app);
+    try testing.expect(ty.app.lhs.* == .app);
 }
 
 test "parseTy: lambda body uses extended context" {
