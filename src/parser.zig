@@ -218,8 +218,35 @@ fn parseTokens(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !st
             return error.UnknownVariable;
         },
         .lambda => {
-            _ = try parseTy(gpa, tokens[1..], ctx);
-            return error.TODO;
+            if (tokens[1] != .ident) return error.MalformedLambda;
+            const ident = tokens[1].ident;
+            if (tokens[2] != .colon) return error.MalformedLambda;
+            const ty, const ty_offset = try parseTy(
+                gpa,
+                tokens[3..],
+                ctx,
+            );
+            defer gpa.destroy(ty);
+
+            if (tokens[3 + ty_offset] != .dot) return error.MalformedLambda;
+            const inner_ctx = core.Ctx{
+                .name = ident,
+                .binding = .{ .variable = ty.* },
+                .pred = ctx,
+            };
+            const inner, const inner_offset = try parseTokens(
+                gpa,
+                tokens[3 + ty_offset + 1 ..],
+                &inner_ctx,
+            );
+
+            const alloc = try gpa.create(core.Term);
+            alloc.* = .{ .abs = .{
+                .name_hint = ident,
+                .ty = ty.*,
+                .term = inner,
+            } };
+            return .{ alloc, 3 + ty_offset + 1 + inner_offset };
         },
         .big_lambda => {
             return error.TODO;
@@ -649,4 +676,95 @@ test "parseTy: lambda body uses extended context" {
     const ty, _ = try parseTy(gpa, tokens, &ctx);
     try testing.expect(ty.* == .abs);
     try testing.expectEqual(@as(u32, 0), ty.abs.ty.variable);
+}
+
+test "parseTokens: bound ident resolves to de Bruijn variable" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const ctx = core.Ctx{
+        .name = "x",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = null,
+    };
+    const tokens = try tokenize("x");
+    const term, const consumed = try parseTokens(gpa, tokens, &ctx);
+    try testing.expect(term.* == .variable);
+    try testing.expectEqual(@as(u32, 0), term.variable);
+    try testing.expectEqual(@as(usize, 1), consumed);
+}
+
+test "parseTokens: ident skips non-variable bindings" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    // β is a type variable, x is a term variable — looking up x walks past β
+    const outer = core.Ctx{
+        .name = "x",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = null,
+    };
+    const inner = core.Ctx{
+        .name = "β",
+        .binding = .{ .ty_var = .proper },
+        .pred = &outer,
+    };
+    const tokens = try tokenize("x");
+    const term, _ = try parseTokens(gpa, tokens, &inner);
+    try testing.expect(term.* == .variable);
+    try testing.expectEqual(@as(u32, 1), term.variable);
+}
+
+test "parseTokens error: unbound ident" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const tokens = try tokenize("x");
+    try testing.expectError(error.UnknownVariable, parseTokens(gpa, tokens, null));
+}
+
+test "parseTokens: term abstraction λx:α.x" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const ctx = core.Ctx{
+        .name = "α",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    };
+    const tokens = try tokenize("λx:α.x");
+    const term, const consumed = try parseTokens(gpa, tokens, &ctx);
+    try testing.expect(term.* == .abs);
+    try testing.expectEqualStrings("x", term.abs.name_hint);
+    try testing.expect(term.abs.ty == .variable);
+    try testing.expectEqual(@as(u32, 0), term.abs.ty.variable);
+    try testing.expect(term.abs.term.* == .variable);
+    try testing.expectEqual(@as(u32, 0), term.abs.term.variable);
+    try testing.expectEqual(tokens.len, consumed);
+}
+
+test "parseTokens: term abstraction body uses extended context" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    // outer y:α; inside λx:α. body x is index 0, y is index 1.
+    const outer = core.Ctx{
+        .name = "α",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    };
+    const ctx = core.Ctx{
+        .name = "y",
+        .binding = .{ .variable = .{ .variable = 0 } },
+        .pred = &outer,
+    };
+    const tokens = try tokenize("λx:α.x");
+    const term, _ = try parseTokens(gpa, tokens, &ctx);
+    try testing.expect(term.* == .abs);
+    try testing.expectEqual(@as(u32, 0), term.abs.term.variable);
 }
