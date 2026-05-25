@@ -84,23 +84,33 @@ fn subst(term: *Term, target: u32, value: *const Term, depth: u32) void {
 
 /// [target -> value]term
 /// [j -> s]t
-fn tyTermSubst(term: *Term, target: u32, value: Ty, depth: u32) void {
+fn tyTermSubst(gpa: Allocator, term: *Term, target: u32, value: Ty, depth: u32) !void {
     switch (term.*) {
         .variable => {},
         .abs => {
-            var ty = term.abs.ty;
-            tychk.tySubst(&ty, target, value);
-            tyTermSubst(term.abs.term, target, value, depth + 1);
+            try tychk.tySubst(gpa, &term.abs.ty, target, value);
+            try tyTermSubst(
+                gpa,
+                term.abs.term,
+                target + 1,
+                value,
+                depth + 1,
+            );
         },
         .app => {
-            tyTermSubst(term.app.lhs, target, value, depth);
-            tyTermSubst(term.app.rhs, target, value, depth);
+            try tyTermSubst(gpa, term.app.lhs, target, value, depth);
+            try tyTermSubst(gpa, term.app.rhs, target, value, depth);
         },
-        .ty_abs => tyTermSubst(term.ty_abs.term, target, value, depth + 1),
+        .ty_abs => try tyTermSubst(gpa, term.ty_abs.term, target, value, depth + 1),
         .ty_app => {
-            var ty = term.ty_app.ty;
-            tychk.tySubst(&ty, target, value);
-            tyTermSubst(term.ty_app.term, target, value, depth + 1);
+            try tychk.tySubst(gpa, &term.ty_app.ty, target, value);
+            try tyTermSubst(
+                gpa,
+                term.ty_app.term,
+                target + 1,
+                value,
+                depth + 1,
+            );
         },
     }
 }
@@ -146,7 +156,7 @@ pub fn evalStep(gpa: Allocator, term: *Term, ctx: ?*const Ctx) !bool {
                     var ty = term.ty_app.ty;
                     const inner_term = term.ty_app.term;
                     tychk.tyShift(&ty, 1, 0);
-                    tyTermSubst(inner_term, 0, ty, 0);
+                    try tyTermSubst(gpa, inner_term, 0, ty, 0);
                     tychk.tyShift(&ty, -1, 0);
                     term.* = inner_term.ty_abs.term.*;
                     gpa.destroy(inner_term);
@@ -238,5 +248,46 @@ test "eval" {
     );
 
     try std.testing.expectEqualDeep(&Term{ .variable = 0 }, term);
+    gpa.destroy(term);
+}
+
+test "eval ty_app substitutes T into ty_abs body" {
+    const gpa = std.testing.allocator;
+
+    // (Λα. λx:α. x) [γ→γ]   under ctx { γ::* }
+    // should reduce to    λx:(γ→γ). x
+
+    var inner_body = Term{ .variable = 0 };
+    var inner_abs = Term{ .abs = .{
+        .name_hint = "x",
+        .ty = .{ .variable = 0 },
+        .term = &inner_body,
+    } };
+
+    const ty_abs = try gpa.create(Term);
+    ty_abs.* = Term{ .ty_abs = .{ .label = "α", .term = &inner_abs } };
+
+    // T = γ→γ — using a structured type so substitution flips the body's
+    // type annotation from .variable to .function (observable change).
+    var t_lhs = Ty{ .variable = 0 };
+    var t_rhs = Ty{ .variable = 0 };
+    const t = Ty{ .function = .{ .lhs = &t_lhs, .rhs = &t_rhs } };
+
+    const term = try gpa.create(Term);
+    term.* = Term{ .ty_app = .{ .ty = t, .term = ty_abs } };
+
+    try eval(gpa, term, &Ctx{
+        .name = "γ",
+        .binding = .{ .ty_var = .proper },
+        .pred = null,
+    });
+
+    try std.testing.expect(term.* == .abs);
+    try std.testing.expect(term.abs.ty == .function);
+    try std.testing.expect(term.abs.ty.function.lhs.* == .variable);
+    try std.testing.expect(term.abs.ty.function.rhs.* == .variable);
+    try std.testing.expect(term.abs.term.* == .variable);
+
+    term.abs.ty.deinit(gpa);
     gpa.destroy(term);
 }

@@ -62,6 +62,69 @@ pub const Ty = union(enum) {
     pub fn eql(self: Ty, other: Ty) bool {
         return util.deepEql(self, other);
     }
+
+    pub fn deepCopyInto(self: *const Ty, gpa: std.mem.Allocator, dest: *Ty) !void {
+        switch (self.*) {
+            .variable => dest.* = self.*,
+            .function => {
+                const alloc = try gpa.alloc(Ty, 2);
+                try self.*.function.lhs.deepCopyInto(gpa, &alloc[0]);
+                try self.*.function.rhs.deepCopyInto(gpa, &alloc[1]);
+                dest.* = .{ .function = .{ .lhs = &alloc[0], .rhs = &alloc[1] } };
+            },
+            .universal => {
+                const alloc = try gpa.alloc(Ty, 1);
+                try self.*.universal.inner.deepCopyInto(gpa, &alloc[0]);
+                dest.* = .{ .universal = .{
+                    .label = self.universal.label,
+                    .kind = self.universal.kind,
+                    .inner = &alloc[0],
+                } };
+            },
+            else => return error.TODO,
+        }
+    }
+
+    pub fn destroy(self: *const Ty, gpa: std.mem.Allocator) void {
+        switch (self.*) {
+            .variable => {},
+            .function => {
+                self.*.function.lhs.destroy(gpa);
+                self.*.function.rhs.destroy(gpa);
+            },
+            .universal => {
+                self.*.universal.inner.destroy(gpa);
+            },
+            .abs => {
+                self.*.abs.ty.destroy(gpa);
+            },
+            .app => {
+                self.*.app.lhs.destroy(gpa);
+                self.*.app.rhs.destroy(gpa);
+            },
+        }
+        gpa.destroy(self);
+    }
+
+    pub fn deinit(self: *const Ty, gpa: std.mem.Allocator) void {
+        switch (self.*) {
+            .variable => {},
+            .function => {
+                self.*.function.lhs.destroy(gpa);
+                self.*.function.rhs.destroy(gpa);
+            },
+            .universal => {
+                self.*.universal.inner.destroy(gpa);
+            },
+            .abs => {
+                self.*.abs.ty.destroy(gpa);
+            },
+            .app => {
+                self.*.app.lhs.destroy(gpa);
+                self.*.app.rhs.destroy(gpa);
+            },
+        }
+    }
 };
 
 pub const Kind = union(enum) {

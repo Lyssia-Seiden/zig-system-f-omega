@@ -33,27 +33,27 @@ pub fn tyShift(ty: *Ty, delta: i64, cutoff: u32) void {
 
 /// [target -> value]ty
 /// [j -> s]t
-pub fn tySubst(ty: *Ty, target: u32, value: Ty) void {
+pub fn tySubst(gpa: Allocator, ty: *Ty, target: u32, value: Ty) !void {
     switch (ty.*) {
         .variable => {
             if (ty.variable == target) {
-                ty.* = value;
+                try value.deepCopyInto(gpa, ty);
                 // tyShift(ty, target, 0);
             }
         },
         .function => {
-            tySubst(ty.function.lhs, target, value);
-            tySubst(ty.function.rhs, target, value);
+            try tySubst(gpa, ty.function.lhs, target, value);
+            try tySubst(gpa, ty.function.rhs, target, value);
         },
         .universal => {
-            tySubst(ty.universal.inner, target + 1, value);
+            try tySubst(gpa, ty.universal.inner, target + 1, value);
         },
         .abs => {
-            tySubst(ty.abs.ty, target + 1, value);
+            try tySubst(gpa, ty.abs.ty, target + 1, value);
         },
         .app => {
-            tySubst(ty.app.lhs, target, value);
-            tySubst(ty.app.rhs, target, value);
+            try tySubst(gpa, ty.app.lhs, target, value);
+            try tySubst(gpa, ty.app.rhs, target, value);
         },
     }
 }
@@ -122,7 +122,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                     if (!inner_ty.universal.kind.eql(kind)) return error.UnkindApplicationFrownyFace;
                     var ty = term.ty_app.ty;
                     tyShift(&ty, 1, 0);
-                    tySubst(inner_ty.universal.inner, 0, ty);
+                    try tySubst(gpa, inner_ty.universal.inner, 0, ty);
                     tyShift(&ty, -1, 0);
                     return inner_ty.universal.inner;
                 },
