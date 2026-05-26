@@ -31,11 +31,28 @@ pub fn main(init: std.process.Init) !void {
     if (ty) |_| {
         try stdout.interface.print("Program Type Checks!!!\n", .{});
         try stdout.flush();
+    } else {
+        try stdout.interface.print("Program Doesn't Type Check :(\n", .{});
+        try stdout.flush();
     }
     try interpreter.eval(gpa, ir, null);
+    try tychk.reduceAllTys(gpa, ir);
     try stdout.interface.print(
-        "{f}\n",
+        "Value: {f}\n",
         .{ir},
     );
+    try stdout.flush();
+
+    const final_ty = tychk.typeOf(gpa, ir, null);
+    if (final_ty catch null) |t| {
+        try stdout.interface.print(
+            "Value is of type: {f}\n",
+            .{t},
+        );
+    } else {
+        try stdout.interface.print("Program Doesn't Type Check :( {any}\n", .{final_ty});
+        try stdout.flush();
+    }
+
     try stdout.flush();
 }

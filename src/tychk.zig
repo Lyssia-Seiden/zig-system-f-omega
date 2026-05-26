@@ -98,6 +98,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                     if (rhs_ty.eql(lhs_from.*)) {
                         return lhs_to;
                     }
+                    // return lhs_to;
                     return error.MalformedArgument;
                 },
                 else => return error.ApplyingToNonFunction,
@@ -271,5 +272,62 @@ test "tychk systemf" {
         try std.testing.expect(ty.* == .function);
         try std.testing.expect(ty.function.lhs.* == .variable);
         try std.testing.expect(ty.function.rhs.* == .variable);
+    }
+}
+
+// Equivalence related functions
+
+fn reduceTyApp(gpa: Allocator, ty: *Ty) !bool {
+    switch (ty.*) {
+        .app => {
+            switch (ty.app.lhs.*) {
+                .abs => {
+                    tyShift(ty.app.rhs, 1, 0);
+                    try tySubst(gpa, ty.app.lhs.abs.ty, 0, ty.app.rhs.*);
+                    tyShift(ty.app.rhs, -1, 0);
+                    ty.* = ty.app.lhs.abs.ty.*;
+                    // gpa.destroy(ty.app.rhs);
+                    // gpa.destroy(ty.app.lhs);
+                    // gpa.destroy(ty.app.lhs.abs.ty);
+                    return true;
+                },
+                else => return false,
+            }
+        },
+        else => return false,
+    }
+}
+
+pub fn reduceTy(gpa: Allocator, ty: *Ty) !void {
+    switch (ty.*) {
+        .app => try reduceTy(gpa, ty.app.lhs),
+        else => {},
+    }
+    while (try reduceTyApp(gpa, ty)) {
+        switch (ty.*) {
+            .app => try reduceTy(gpa, ty.app.lhs),
+            else => {},
+        }
+    }
+}
+
+pub fn reduceAllTys(gpa: Allocator, term: *Term) !void {
+    switch (term.*) {
+        .variable => {},
+        .abs => {
+            try reduceTy(gpa, &term.abs.ty);
+            try reduceAllTys(gpa, term.abs.term);
+        },
+        .app => {
+            try reduceAllTys(gpa, term.app.lhs);
+            try reduceAllTys(gpa, term.app.rhs);
+        },
+        .ty_abs => {
+            try reduceAllTys(gpa, term.ty_abs.term);
+        },
+        .ty_app => {
+            try reduceTy(gpa, &term.ty_app.ty);
+            try reduceAllTys(gpa, term.ty_app.term);
+        },
     }
 }

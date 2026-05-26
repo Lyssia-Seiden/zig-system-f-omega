@@ -88,7 +88,7 @@ fn tyTermSubst(gpa: Allocator, term: *Term, target: u32, value: Ty, depth: u32) 
     switch (term.*) {
         .variable => {},
         .abs => {
-            try tychk.tySubst(gpa, &term.abs.ty, target, value);
+            _ = try tychk.tySubst(gpa, &term.abs.ty, target - 1, value);
             try tyTermSubst(
                 gpa,
                 term.abs.term,
@@ -101,15 +101,15 @@ fn tyTermSubst(gpa: Allocator, term: *Term, target: u32, value: Ty, depth: u32) 
             try tyTermSubst(gpa, term.app.lhs, target, value, depth);
             try tyTermSubst(gpa, term.app.rhs, target, value, depth);
         },
-        .ty_abs => try tyTermSubst(gpa, term.ty_abs.term, target, value, depth + 1),
+        .ty_abs => try tyTermSubst(gpa, term.ty_abs.term, target + 1, value, depth + 1),
         .ty_app => {
-            try tychk.tySubst(gpa, &term.ty_app.ty, target, value);
+            _ = try tychk.tySubst(gpa, &term.ty_app.ty, target, value);
             try tyTermSubst(
                 gpa,
                 term.ty_app.term,
-                target + 1,
+                target,
                 value,
-                depth + 1,
+                depth,
             );
         },
     }
