@@ -18,6 +18,29 @@ const Token = union(enum) {
     open_bracket,
     close_bracket,
     space,
+
+    pub fn format(
+        self: @This(),
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        try writer.writeAll(switch (self) {
+            .ident => |s| s,
+            .lambda => "λ",
+            .big_lambda => "Λ",
+            .forall => "∀",
+            .dot => ".",
+            .colon => ":",
+            .double_colon => "::",
+            .arrow => "->",
+            .double_arrow => "=>",
+            .proper_type => "*",
+            .open_paren => "(",
+            .close_paren => ")",
+            .open_bracket => "[",
+            .close_bracket => "]",
+            .space => " ",
+        });
+    }
 };
 
 const literals = .{
@@ -37,6 +60,7 @@ const literals = .{
     .{ "]", .close_bracket },
     .{ " ", .space },
 };
+const skips = .{ "\n", "\t" };
 
 fn tokenize(gpa: Allocator, str: []const u8) ![]const Token {
     var list: std.ArrayList(Token) = try .initCapacity(gpa, 16);
@@ -50,6 +74,12 @@ fn tokenize(gpa: Allocator, str: []const u8) ![]const Token {
             if (std.mem.startsWith(u8, str[i..], literal[0])) {
                 try list.append(gpa, literal[1]);
                 i += literal[0].len;
+                continue :outer;
+            }
+        }
+        inline for (skips) |skip| {
+            if (std.mem.startsWith(u8, str[i..], skip)) {
+                i += skip.len;
                 continue :outer;
             }
         }
@@ -457,9 +487,9 @@ fn parseKind(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !stru
         },
         .open_paren => {
             var closing_idx: usize = 1;
-            var arrow_idx: usize = 1;
+            var arrow_idx: usize = 0;
             var paren_count: i32 = 0;
-            while (paren_count == 0 and tokens[closing_idx] == .close_paren) {
+            while (!(paren_count == 0 and tokens[closing_idx] == .close_paren)) {
                 if (tokens[closing_idx] == .open_paren) paren_count += 1;
                 if (tokens[closing_idx] == .close_paren) paren_count -= 1;
                 if (tokens[closing_idx] == .double_arrow and paren_count == 0)
@@ -468,14 +498,14 @@ fn parseKind(gpa: Allocator, tokens: []const Token, ctx: ?*const core.Ctx) !stru
             }
 
             const lhs, _ = try parseKind(gpa, tokens[1..arrow_idx], ctx);
-            const rhs, _ = try parseKind(gpa, tokens[arrow_idx..closing_idx], ctx);
+            const rhs, _ = try parseKind(gpa, tokens[arrow_idx + 1 .. closing_idx], ctx);
 
             const alloc = try gpa.create(core.Kind);
             alloc.* = .{ .operator = .{
                 .from = lhs,
                 .to = rhs,
             } };
-            return .{ alloc, closing_idx };
+            return .{ alloc, closing_idx + 1 };
         },
         else => return error.MalformedKind,
     }
@@ -495,6 +525,20 @@ test "parseKind: proper type" {
     const kind, const consumed = try parseKind(gpa, tokens, null);
     try testing.expect(kind.* == .proper);
     try testing.expectEqual(@as(usize, 1), consumed);
+}
+
+test "parseKind: operator type" {
+    var arena = arenaAlloc();
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const tokens = try tokenize(std.testing.allocator, "(*=>*)");
+    defer std.testing.allocator.free(tokens);
+    const kind, const consumed = try parseKind(gpa, tokens, null);
+    try testing.expect(kind.* == .operator);
+    try testing.expect(kind.operator.from.* == .proper);
+    try testing.expect(kind.operator.to.* == .proper);
+    try testing.expectEqual(@as(usize, 5), consumed);
 }
 
 test "parseKind: only consumes a single token" {

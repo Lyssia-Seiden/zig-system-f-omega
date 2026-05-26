@@ -81,7 +81,21 @@ pub const Ty = union(enum) {
                     .inner = &alloc[0],
                 } };
             },
-            else => return error.TODO,
+            .abs => {
+                const alloc = try gpa.alloc(Ty, 1);
+                try self.*.abs.ty.deepCopyInto(gpa, &alloc[0]);
+                dest.* = .{ .abs = .{
+                    .name_hint = self.abs.name_hint,
+                    .kind = self.abs.kind,
+                    .ty = &alloc[0],
+                } };
+            },
+            .app => {
+                const alloc = try gpa.alloc(Ty, 2);
+                try self.*.app.lhs.deepCopyInto(gpa, &alloc[0]);
+                try self.*.app.rhs.deepCopyInto(gpa, &alloc[1]);
+                dest.* = .{ .app = .{ .lhs = &alloc[0], .rhs = &alloc[1] } };
+            },
         }
     }
 
