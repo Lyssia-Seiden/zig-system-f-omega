@@ -6,7 +6,7 @@ const Ctx = core.Ctx;
 const Ty = core.Ty;
 const Allocator = std.mem.Allocator;
 
-fn shift(term: *Term, delta: i64, cutoff: u32) void {
+pub fn shift(term: *Term, delta: i64, cutoff: u32) void {
     switch (term.*) {
         .variable => {
             if (term.variable >= cutoff)

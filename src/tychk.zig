@@ -1,6 +1,7 @@
 const std = @import("std");
 const core = @import("core.zig");
 const kinding = @import("kinding.zig");
+const interpreter = @import("interpreter.zig");
 const Term = core.Term;
 const Ctx = core.Ctx;
 const Ty = core.Ty;
@@ -81,7 +82,10 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                 .pred = ctx,
             };
             const res = try gpa.alloc(Ty, 2);
+
+            std.debug.print("recursing on {f}\n", .{core.TermWCtx{ .term = term.abs.term, .ctx = ctx }});
             const rhs = try typeOf(gpa, term.abs.term, &ctx_new);
+            // tyShift(term.abs.term, 1, 0);
             res[0] = term.abs.ty;
             res[1] = .{ .function = .{ .lhs = &res[0], .rhs = rhs } };
             return &res[1];
@@ -94,8 +98,21 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                     const lhs_from = lhs_ty.function.lhs;
                     const lhs_to = lhs_ty.function.rhs;
 
+                    std.debug.print("{f} ?= {f} in {f}\n", .{
+                        lhs_from,
+                        rhs_ty,
+                        core.TermWCtx{ .term = term, .ctx = ctx },
+                    });
+                    try reduceTy(gpa, rhs_ty);
+                    try reduceTy(gpa, lhs_from);
+                    std.debug.print("{f} ?= {f} in {f}\n", .{
+                        lhs_from,
+                        rhs_ty,
+                        core.TermWCtx{ .term = term, .ctx = ctx },
+                    });
+
                     // TODO test for equivalence, not just equality
-                    if (rhs_ty.eql(lhs_from.*)) {
+                    if (rhs_ty.eql(lhs_from.*, ctx)) {
                         return lhs_to;
                     }
                     // return lhs_to;
@@ -110,6 +127,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                 .binding = .{ .ty_var = term.ty_abs.kind },
                 .pred = ctx,
             };
+            std.debug.print("recursing on {f}\n", .{core.TermWCtx{ .term = term.ty_abs.term, .ctx = ctx }});
             const inner_ty = try typeOf(gpa, term.ty_abs.term, &new_ctx);
             const alloc = try gpa.create(Ty);
             alloc.* = Ty{ .universal = .{ .inner = inner_ty, .label = term.ty_abs.label } };
@@ -328,6 +346,26 @@ pub fn reduceAllTys(gpa: Allocator, term: *Term) !void {
         .ty_app => {
             try reduceTy(gpa, &term.ty_app.ty);
             try reduceAllTys(gpa, term.ty_app.term);
+        },
+    }
+}
+
+pub fn tyShiftVars(term: *Term, delta: i64, cutoff: u32) void {
+    switch (term.*) {
+        .variable => {
+            if (term.variable >= cutoff)
+                term.variable = @intCast(@as(i32, @intCast(term.*.variable)) + delta);
+        },
+        .abs => {
+            tyShiftVars(term.abs.term, delta, cutoff + 1);
+        },
+        .app => {
+            tyShiftVars(term.app.lhs, delta, cutoff);
+            tyShiftVars(term.app.rhs, delta, cutoff);
+        },
+        .ty_abs => tyShiftVars(term.ty_abs.term, delta, cutoff + 1),
+        .ty_app => {
+            tyShiftVars(term.ty_app.term, delta, cutoff);
         },
     }
 }

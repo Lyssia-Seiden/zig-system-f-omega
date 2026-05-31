@@ -59,8 +59,34 @@ pub const Ty = union(enum) {
         }
     }
 
-    pub fn eql(self: Ty, other: Ty) bool {
-        return util.deepEql(self, other);
+    pub fn eql(self: Ty, other: Ty, ctx: ?*const Ctx) bool {
+        if (@intFromEnum(self) != @intFromEnum(other)) return false;
+        switch (self) {
+            .variable => {
+                std.debug.print("{any}\n", .{ctx.?.get(self.variable).?});
+                const self_bind = ctx.?.get(self.variable).?;
+                const other_bind = ctx.?.get(other.variable).?;
+                if (@intFromEnum(self_bind) != @intFromEnum(other_bind)) return false;
+                switch (self_bind) {
+                    .ty_var => {
+                        return self_bind.ty_var.eql(ctx.?.get(other.variable).?.ty_var);
+                    },
+                    else => return false, // should always be a ty binding
+                }
+            },
+            .function => {
+                return self.function.lhs.eql(other.function.lhs.*, ctx) and self.function.rhs.eql(other.function.rhs.*, ctx);
+            },
+            .universal => {
+                return self.universal.kind.eql(other.universal.kind) and self.universal.inner.eql(other.universal.inner.*, ctx);
+            },
+            .abs => {
+                return self.abs.kind.eql(other.abs.kind) and self.abs.ty.eql(other.abs.ty.*, ctx);
+            },
+            .app => {
+                return self.app.lhs.eql(other.app.lhs.*, ctx) and self.app.rhs.eql(other.app.rhs.*, ctx);
+            },
+        }
     }
 
     pub fn deepCopyInto(self: *const Ty, gpa: std.mem.Allocator, dest: *Ty) !void {
@@ -193,6 +219,16 @@ pub const Ctx = struct {
         if (self.pred) |p| return p.getName(i - 1);
         return null;
     }
+
+    pub fn find(self: Ctx, binding: Binding) ?u32 {
+        if (@intFromEnum(self.binding) != @intFromEnum(binding))
+            (self.pred.find(binding));
+        switch (self.binding) {
+            .name => return true,
+            .variable => return self.binding.variable.eql(binding.variable, self),
+            .ty_var => return self.binding.ty_var.eql(binding.ty_var),
+        }
+    }
 };
 
 pub const TermWCtx = struct {
@@ -205,7 +241,7 @@ pub const TermWCtx = struct {
             .variable => try writer.print(
                 "{s}/{}",
                 .{
-                    if (self.ctx) |c| c.getName(self.term.variable) orelse "unknown" else "unknown",
+                    if (self.ctx) |c| c.getName(self.term.variable) orelse "?" else "?",
                     self.term.variable,
                 },
             ),
@@ -234,8 +270,9 @@ pub const TermWCtx = struct {
                     .binding = .{ .ty_var = self.term.ty_abs.kind },
                     .pred = self.ctx,
                 };
-                try writer.print("Λ{s}.{f}", .{
+                try writer.print("Λ{s}::{f}.{f}", .{
                     self.term.ty_abs.label,
+                    self.term.ty_abs.kind,
                     TermWCtx{
                         .term = self.term.ty_abs.term,
                         .ctx = &inner_ctx,
