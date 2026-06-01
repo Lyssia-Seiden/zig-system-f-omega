@@ -29,14 +29,19 @@ pub fn main(init: std.process.Init) !void {
         .{ir},
     );
     try stdout.flush();
-    const ty = tychk.typeOf(gpa, ir, null);
-    if (ty catch null) |_| {
-        try stdout.interface.print("Program Type Checks!!!\n", .{});
-        try stdout.flush();
-    } else {
-        try stdout.interface.print("Program Doesn't Type Check :( {any}\n", .{ty});
-        try stdout.flush();
-    }
+    // ir.print(null);
+    // const ty = tychk.typeOf(gpa, ir, null);
+    // ir.print(null);
+    // if (ty catch null) |_| {
+    //     try stdout.interface.print(
+    //         "Program Type Checks!!!\nProgram is of type : {f}\n",
+    //         .{ty catch unreachable},
+    //     );
+    //     try stdout.flush();
+    // } else {
+    //     try stdout.interface.print("Program Doesn't Type Check :( {any}\n", .{ty});
+    //     try stdout.flush();
+    // }
     try interpreter.eval(gpa, ir, null);
     try tychk.reduceAllTys(gpa, ir);
     try stdout.interface.print(
@@ -47,6 +52,7 @@ pub fn main(init: std.process.Init) !void {
 
     const final_ty = tychk.typeOf(gpa, ir, null);
     if (final_ty catch null) |t| {
+        try tychk.walkReduceTys(gpa, t);
         try stdout.interface.print(
             "Value is of type: {f}\n",
             .{t},

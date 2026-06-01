@@ -35,6 +35,7 @@ pub fn tyShift(ty: *Ty, delta: i64, cutoff: u32) void {
 /// [target -> value]ty
 /// [j -> s]t
 pub fn tySubst(gpa: Allocator, ty: *Ty, target: u32, value: Ty) !void {
+    // std.debug.print("substituting in {f}\n", .{ty.*});
     switch (ty.*) {
         .variable => {
             if (ty.variable == target) {
@@ -84,9 +85,9 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
             };
             const res = try gpa.alloc(Ty, 2);
 
-            std.debug.print("recursing on {f}\n", .{
-                core.TermWCtx{ .term = term.abs.term, .ctx = &ctx_new },
-            });
+            // std.debug.print("recursing on {f}\n", .{
+            //     core.TermWCtx{ .term = term.abs.term, .ctx = &ctx_new },
+            // });
             const rhs = try typeOf(gpa, term.abs.term, &ctx_new);
             // tyShift(rhs, -1, 0);
             // tyShift(term.abs.term, 1, 0);
@@ -103,12 +104,12 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                     const lhs_from = lhs_ty.function.lhs;
                     const lhs_to = lhs_ty.function.rhs;
 
-                    std.debug.print("{f} ?= {f} in {f} w ctx {f}\n", .{
-                        lhs_from,
-                        rhs_ty,
-                        core.TermWCtx{ .term = term, .ctx = ctx },
-                        ctx.?,
-                    });
+                    // std.debug.print("{f} ?= {f} in {f} w ctx {f}\n", .{
+                    //     lhs_from,
+                    //     rhs_ty,
+                    //     core.TermWCtx{ .term = term, .ctx = ctx },
+                    //     ctx.?,
+                    // });
 
                     // TODO test for equivalence, not just equality
                     if (try rhs_ty.eqv(gpa, lhs_from, ctx)) {
@@ -126,9 +127,9 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                 .binding = .{ .ty_var = term.ty_abs.kind },
                 .pred = ctx,
             };
-            std.debug.print("recursing on {f}\n", .{
-                core.TermWCtx{ .term = term.ty_abs.term, .ctx = &new_ctx },
-            });
+            // std.debug.print("recursing on {f}\n", .{
+            //     core.TermWCtx{ .term = term.ty_abs.term, .ctx = &new_ctx },
+            // });
             const inner_ty = try typeOf(gpa, term.ty_abs.term, &new_ctx);
             const alloc = try gpa.create(Ty);
             alloc.* = Ty{ .universal = .{ .inner = inner_ty, .kind = term.ty_abs.kind, .label = term.ty_abs.label } };
@@ -140,8 +141,8 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
             switch (inner_ty.*) {
                 .universal => {
                     const kind = try kinding.kindOf(gpa, &term.ty_app.ty, ctx);
-                    std.debug.print("lhs kind {f} rhs {f}\n", .{ inner_ty.universal.kind, kind });
-                    std.debug.print("lhs ty {f} rhs ty {f}\n", .{ inner_ty, term.ty_app.ty });
+                    // std.debug.print("lhs kind {f} rhs {f}\n", .{ inner_ty.universal.kind, kind });
+                    // std.debug.print("lhs ty {f} rhs ty {f}\n", .{ inner_ty, term.ty_app.ty });
                     if (!inner_ty.universal.kind.eql(kind)) return error.UnkindApplicationFrownyFace;
                     var ty = term.ty_app.ty;
                     tyShift(&ty, 1, 0);
@@ -337,6 +338,17 @@ pub fn reduceTy(gpa: Allocator, ty: *Ty) !void {
             else => return,
         },
         else => return,
+    }
+}
+
+pub fn walkReduceTys(gpa: Allocator, ty: *Ty) !void {
+    switch (ty.*) {
+        .universal => try walkReduceTys(gpa, ty.universal.inner),
+        .function => {
+            try walkReduceTys(gpa, ty.function.lhs);
+            try walkReduceTys(gpa, ty.function.rhs);
+        },
+        else => try reduceTy(gpa, ty),
     }
 }
 

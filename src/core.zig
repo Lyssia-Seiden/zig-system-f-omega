@@ -85,7 +85,7 @@ pub const Ty = union(enum) {
             },
             .universal => {
                 const inner_ctx = Ctx{
-                    .name = self.abs.name_hint,
+                    .name = self.universal.label,
                     .binding = .name,
                     .pred = ctx,
                 };
