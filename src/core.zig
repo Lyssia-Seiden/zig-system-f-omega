@@ -1,5 +1,7 @@
 const std = @import("std");
 const util = @import("util.zig");
+// ugly aah import graph
+const tychk = @import("tychk.zig");
 
 pub const Term = union(enum) {
     variable: u32,
@@ -33,7 +35,7 @@ pub const Term = union(enum) {
 pub const Ty = union(enum) {
     variable: u32,
     function: struct { lhs: *Ty, rhs: *Ty },
-    universal: struct { label: []const u8, kind: Kind = .proper, inner: *Ty },
+    universal: struct { label: []const u8, kind: Kind, inner: *Ty },
     abs: struct { name_hint: []const u8, kind: Kind, ty: *Ty },
     app: struct { lhs: *Ty, rhs: *Ty },
 
@@ -59,32 +61,53 @@ pub const Ty = union(enum) {
         }
     }
 
-    pub fn eql(self: Ty, other: Ty, ctx: ?*const Ctx) bool {
-        if (@intFromEnum(self) != @intFromEnum(other)) return false;
-        switch (self) {
+    pub fn eqv(self: *Ty, gpa: std.mem.Allocator, other: *Ty, ctx: ?*const Ctx) !bool {
+        try tychk.reduceTy(gpa, self);
+        try tychk.reduceTy(gpa, other);
+        if (@intFromEnum(self.*) != @intFromEnum(other.*)) return false;
+        switch (self.*) {
             .variable => {
-                std.debug.print("{any}\n", .{ctx.?.get(self.variable).?});
-                const self_bind = ctx.?.get(self.variable).?;
-                const other_bind = ctx.?.get(other.variable).?;
-                if (@intFromEnum(self_bind) != @intFromEnum(other_bind)) return false;
-                switch (self_bind) {
-                    .ty_var => {
-                        return self_bind.ty_var.eql(ctx.?.get(other.variable).?.ty_var);
-                    },
-                    else => return false, // should always be a ty binding
-                }
+                // std.debug.print("{any}\n", .{ctx.?.get(self.variable).?});
+                return self.variable == other.variable;
+                // const self_bind = ctx.?.get(self.variable).?;
+                // const other_bind = ctx.?.get(other.variable).?;
+                // if (@intFromEnum(self_bind) != @intFromEnum(other_bind)) return false;
+                // switch (self_bind) {
+                //     .ty_var => {
+                //         return self_bind.ty_var.eql(ctx.?.get(other.variable).?.ty_var);
+                //     },
+                //     else => return false, // should always be a ty binding
+                // }
             },
             .function => {
-                return self.function.lhs.eql(other.function.lhs.*, ctx) and self.function.rhs.eql(other.function.rhs.*, ctx);
+                return try self.function.lhs.eqv(gpa, other.function.lhs, ctx) and
+                    try self.function.rhs.eqv(gpa, other.function.rhs, ctx);
             },
             .universal => {
-                return self.universal.kind.eql(other.universal.kind) and self.universal.inner.eql(other.universal.inner.*, ctx);
+                const inner_ctx = Ctx{
+                    .name = self.abs.name_hint,
+                    .binding = .name,
+                    .pred = ctx,
+                };
+                return self.universal.kind.eql(other.universal.kind) and
+                    try self.universal.inner.eqv(
+                        gpa,
+                        other.universal.inner,
+                        &inner_ctx,
+                    );
             },
             .abs => {
-                return self.abs.kind.eql(other.abs.kind) and self.abs.ty.eql(other.abs.ty.*, ctx);
+                const inner_ctx = Ctx{
+                    .name = self.abs.name_hint,
+                    .binding = .name,
+                    .pred = ctx,
+                };
+                return self.abs.kind.eql(other.abs.kind) and
+                    try self.abs.ty.eqv(gpa, other.abs.ty, &inner_ctx);
             },
             .app => {
-                return self.app.lhs.eql(other.app.lhs.*, ctx) and self.app.rhs.eql(other.app.rhs.*, ctx);
+                return try self.app.lhs.eqv(gpa, other.app.lhs, ctx) and
+                    try self.app.rhs.eqv(gpa, other.app.rhs, ctx);
             },
         }
     }
@@ -197,12 +220,32 @@ pub const Binding = union(enum) {
     name,
     variable: Ty,
     ty_var: Kind,
+
+    pub fn format(
+        self: @This(),
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        switch (self) {
+            .name => try writer.print("name binding", .{}),
+            .variable => try writer.print("var of ty {f}", .{self.variable}),
+            .ty_var => try writer.print("ty of kind {f}", .{self.ty_var}),
+        }
+    }
 };
 
 pub const Ctx = struct {
     name: []const u8,
     binding: Binding,
     pred: ?*const Ctx,
+
+    pub fn format(
+        self: @This(),
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        try writer.print("{s} = {f}", .{ self.name, self.binding });
+        if (self.pred) |pred|
+            try writer.print(" : {f}", .{pred});
+    }
 
     pub fn head(self: Ctx) Ctx {
         return if (self.pred) |next| head(next.*) else self;
@@ -220,12 +263,12 @@ pub const Ctx = struct {
         return null;
     }
 
-    pub fn find(self: Ctx, binding: Binding) ?u32 {
+    pub fn find(self: Ctx, gpa: std.mem.Allocator, binding: Binding) ?u32 {
         if (@intFromEnum(self.binding) != @intFromEnum(binding))
-            (self.pred.find(binding));
+            (self.pred.find(gpa, binding));
         switch (self.binding) {
             .name => return true,
-            .variable => return self.binding.variable.eql(binding.variable, self),
+            .variable => return self.binding.variable.eqv(gpa, binding.variable, self),
             .ty_var => return self.binding.ty_var.eql(binding.ty_var),
         }
     }

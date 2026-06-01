@@ -67,6 +67,7 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                     .variable => {
                         const alloc = try gpa.create(Ty);
                         alloc.* = memo.variable;
+                        tyShift(alloc, term.variable, 0);
                         return alloc;
                     },
                     else => return error.VariableImproperlyTyped,
@@ -83,8 +84,11 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
             };
             const res = try gpa.alloc(Ty, 2);
 
-            std.debug.print("recursing on {f}\n", .{core.TermWCtx{ .term = term.abs.term, .ctx = ctx }});
+            std.debug.print("recursing on {f}\n", .{
+                core.TermWCtx{ .term = term.abs.term, .ctx = &ctx_new },
+            });
             const rhs = try typeOf(gpa, term.abs.term, &ctx_new);
+            // tyShift(rhs, -1, 0);
             // tyShift(term.abs.term, 1, 0);
             res[0] = term.abs.ty;
             res[1] = .{ .function = .{ .lhs = &res[0], .rhs = rhs } };
@@ -92,27 +96,22 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
         },
         .app => {
             const lhs_ty = try typeOf(gpa, term.app.lhs, ctx);
+            try reduceTy(gpa, lhs_ty);
             const rhs_ty = try typeOf(gpa, term.app.rhs, ctx);
             switch (lhs_ty.*) {
                 .function => {
                     const lhs_from = lhs_ty.function.lhs;
                     const lhs_to = lhs_ty.function.rhs;
 
-                    std.debug.print("{f} ?= {f} in {f}\n", .{
+                    std.debug.print("{f} ?= {f} in {f} w ctx {f}\n", .{
                         lhs_from,
                         rhs_ty,
                         core.TermWCtx{ .term = term, .ctx = ctx },
-                    });
-                    try reduceTy(gpa, rhs_ty);
-                    try reduceTy(gpa, lhs_from);
-                    std.debug.print("{f} ?= {f} in {f}\n", .{
-                        lhs_from,
-                        rhs_ty,
-                        core.TermWCtx{ .term = term, .ctx = ctx },
+                        ctx.?,
                     });
 
                     // TODO test for equivalence, not just equality
-                    if (rhs_ty.eql(lhs_from.*, ctx)) {
+                    if (try rhs_ty.eqv(gpa, lhs_from, ctx)) {
                         return lhs_to;
                     }
                     // return lhs_to;
@@ -127,17 +126,22 @@ pub fn typeOf(gpa: Allocator, term: *const Term, ctx: ?*const Ctx) !*Ty {
                 .binding = .{ .ty_var = term.ty_abs.kind },
                 .pred = ctx,
             };
-            std.debug.print("recursing on {f}\n", .{core.TermWCtx{ .term = term.ty_abs.term, .ctx = ctx }});
+            std.debug.print("recursing on {f}\n", .{
+                core.TermWCtx{ .term = term.ty_abs.term, .ctx = &new_ctx },
+            });
             const inner_ty = try typeOf(gpa, term.ty_abs.term, &new_ctx);
             const alloc = try gpa.create(Ty);
-            alloc.* = Ty{ .universal = .{ .inner = inner_ty, .label = term.ty_abs.label } };
+            alloc.* = Ty{ .universal = .{ .inner = inner_ty, .kind = term.ty_abs.kind, .label = term.ty_abs.label } };
             return alloc;
         },
         .ty_app => {
             const inner_ty = try typeOf(gpa, term.ty_app.term, ctx);
+            try reduceTy(gpa, inner_ty);
             switch (inner_ty.*) {
                 .universal => {
                     const kind = try kinding.kindOf(gpa, &term.ty_app.ty, ctx);
+                    std.debug.print("lhs kind {f} rhs {f}\n", .{ inner_ty.universal.kind, kind });
+                    std.debug.print("lhs ty {f} rhs ty {f}\n", .{ inner_ty, term.ty_app.ty });
                     if (!inner_ty.universal.kind.eql(kind)) return error.UnkindApplicationFrownyFace;
                     var ty = term.ty_app.ty;
                     tyShift(&ty, 1, 0);
@@ -317,15 +321,22 @@ fn reduceTyApp(gpa: Allocator, ty: *Ty) !bool {
 }
 
 pub fn reduceTy(gpa: Allocator, ty: *Ty) !void {
+    // first reduce the lhs, if this is an application
     switch (ty.*) {
         .app => try reduceTy(gpa, ty.app.lhs),
         else => {},
     }
-    while (try reduceTyApp(gpa, ty)) {
-        switch (ty.*) {
-            .app => try reduceTy(gpa, ty.app.lhs),
-            else => {},
-        }
+    // apply substitution if possible
+    // then repeat
+    switch (ty.*) {
+        .app => switch (ty.app.lhs.*) {
+            .abs => {
+                // simplify
+                if (try reduceTyApp(gpa, ty)) try reduceTy(gpa, ty);
+            },
+            else => return,
+        },
+        else => return,
     }
 }
 

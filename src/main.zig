@@ -4,6 +4,8 @@ const tychk = @import("tychk.zig");
 const interpreter = @import("interpreter.zig");
 const core = @import("core.zig");
 
+const options = std.Options{ .fmt_max_depth = 100 };
+
 pub fn main(init: std.process.Init) !void {
     var aa = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer aa.deinit();
@@ -27,12 +29,12 @@ pub fn main(init: std.process.Init) !void {
         .{ir},
     );
     try stdout.flush();
-    const ty: ?*core.Ty = tychk.typeOf(gpa, ir, null) catch null;
-    if (ty) |_| {
+    const ty = tychk.typeOf(gpa, ir, null);
+    if (ty catch null) |_| {
         try stdout.interface.print("Program Type Checks!!!\n", .{});
         try stdout.flush();
     } else {
-        try stdout.interface.print("Program Doesn't Type Check :(\n", .{});
+        try stdout.interface.print("Program Doesn't Type Check :( {any}\n", .{ty});
         try stdout.flush();
     }
     try interpreter.eval(gpa, ir, null);
